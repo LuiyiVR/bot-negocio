@@ -396,6 +396,18 @@ def todos_los_bins() -> list:
         ).fetchall()
 
 
+def get_bin(bin_id: int):
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM bins WHERE id=?", (bin_id,)).fetchone()
+
+
 def delete_bin(bin_id: int):
     with get_conn() as conn:
         conn.execute("DELETE FROM bins WHERE id=?", (bin_id,))
+
+
+def delete_tienda_bin(nombre: str):
+    """Elimina la tienda y todos sus BINs."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM bins WHERE tienda=?", (nombre,))
+        conn.execute("DELETE FROM tiendas_bins WHERE nombre=?", (nombre,))

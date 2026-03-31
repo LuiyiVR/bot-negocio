@@ -1835,6 +1835,157 @@ async def bin_ver_tienda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  /RMV — ELIMINAR TIENDAS Y BINS
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def rmv_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    texto = "🗑 *Eliminar de Bodega de BINs*\n\n¿Qué quieres eliminar?"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏪  Tienda completa (y sus BINs)", callback_data="rmv_modo:tienda")],
+        [InlineKeyboardButton("💳  Un BIN específico",            callback_data="rmv_modo:bin")],
+        [InlineKeyboardButton("❌  Cancelar",                     callback_data="bin_menu")],
+    ])
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(texto, parse_mode="Markdown", reply_markup=kb)
+    else:
+        await update.message.reply_text(texto, parse_mode="Markdown", reply_markup=kb)
+    return ST_MENU
+
+
+async def rmv_sel_tiendas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    modo = q.data.split(":", 1)[1]
+    tiendas = db.get_tiendas_bins()
+    if not tiendas:
+        await q.edit_message_text("📭 No hay tiendas registradas.", reply_markup=kb_volver_bins())
+        return ST_MENU
+
+    if modo == "tienda":
+        prefijo = "rmv_del_tienda"
+        titulo = "🏪 *Selecciona la tienda a eliminar*\n_Se borrarán todos sus BINs_"
+    else:
+        prefijo = "rmv_bins"
+        titulo = "💳 *¿De qué tienda quieres eliminar el BIN?*"
+
+    filas = [
+        [InlineKeyboardButton(t["nombre"], callback_data=f"{prefijo}:{t['nombre']}")]
+        for t in tiendas
+    ]
+    filas.append([InlineKeyboardButton("❌  Cancelar", callback_data="bin_menu")])
+    await q.edit_message_text(titulo, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(filas))
+    return ST_MENU
+
+
+async def rmv_confirmar_tienda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    tienda = q.data.split(":", 1)[1]
+    n_bins = len(db.bins_por_tienda(tienda))
+    await q.edit_message_text(
+        f"⚠️ *¿Eliminar esta tienda?*\n\n"
+        f"🏪 *{safe(tienda)}*\n"
+        f"💳 {n_bins} BINs guardados se eliminarán también\n\n"
+        f"_Esta acción no se puede deshacer._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅  Sí, eliminar todo", callback_data=f"rmv_ok_tienda:{tienda}")],
+            [InlineKeyboardButton("❌  Cancelar",          callback_data="bin_menu")],
+        ]),
+    )
+    return ST_MENU
+
+
+async def rmv_ok_tienda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    tienda = q.data.split(":", 1)[1]
+    n_bins = len(db.bins_por_tienda(tienda))
+    db.delete_tienda_bin(tienda)
+    await q.edit_message_text(
+        f"✅ *Tienda eliminada*\n\n"
+        f"🏪 {safe(tienda)}\n"
+        f"💳 {n_bins} BIN{'s' if n_bins != 1 else ''} eliminado{'s' if n_bins != 1 else ''}",
+        parse_mode="Markdown",
+        reply_markup=kb_volver_bins(),
+    )
+    return ST_MENU
+
+
+async def rmv_sel_bins(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    tienda = q.data.split(":", 1)[1]
+    bins = db.bins_por_tienda(tienda)
+    if not bins:
+        await q.edit_message_text(
+            f"📭 No hay BINs en *{safe(tienda)}*.",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+        return ST_MENU
+
+    filas = [
+        [InlineKeyboardButton(
+            f"💳 {b['bin']} — {b['agregado_por']}",
+            callback_data=f"rmv_del_bin:{b['id']}"
+        )]
+        for b in bins
+    ]
+    filas.append([InlineKeyboardButton("❌  Cancelar", callback_data="bin_menu")])
+    await q.edit_message_text(
+        f"💳 *BINs de {safe(tienda)}*\nSelecciona el que quieres eliminar:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(filas),
+    )
+    return ST_MENU
+
+
+async def rmv_confirmar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    bin_id = int(q.data.split(":")[1])
+    b = db.get_bin(bin_id)
+    if not b:
+        await q.edit_message_text("❌ BIN no encontrado.", reply_markup=kb_volver_bins())
+        return ST_MENU
+    await q.edit_message_text(
+        f"⚠️ *¿Eliminar este BIN?*\n\n"
+        f"💳 `{b['bin']}` en *{safe(b['tienda'])}*\n"
+        f"👤 Registrado por {safe(b['agregado_por'])} el {b['fecha'][:10]}\n\n"
+        f"_Esta acción no se puede deshacer._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅  Sí, eliminar", callback_data=f"rmv_ok_bin:{bin_id}")],
+            [InlineKeyboardButton("❌  Cancelar",     callback_data="bin_menu")],
+        ]),
+    )
+    return ST_MENU
+
+
+async def rmv_ok_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    bin_id = int(q.data.split(":")[1])
+    b = db.get_bin(bin_id)
+    if b:
+        db.delete_bin(bin_id)
+        await q.edit_message_text(
+            f"✅ *BIN eliminado*\n\n"
+            f"💳 `{b['bin']}` de *{safe(b['tienda'])}*",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+    else:
+        await q.edit_message_text("❌ BIN no encontrado.", reply_markup=kb_volver_bins())
+    return ST_MENU
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1852,6 +2003,7 @@ def main():
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", mostrar_menu),
+            CommandHandler("rmv",   rmv_menu),
             # Permiten interactuar con pedidos desde notificaciones externas
             CallbackQueryHandler(aceptar_ped_inicio,   pattern=r"^aceptar_ped:\d+$"),
             CallbackQueryHandler(completar_ped_inicio, pattern=r"^completar_ped:\d+$"),
@@ -1887,12 +2039,21 @@ def main():
                 CallbackQueryHandler(del_pedido_ok,        pattern=r"^del_pedido_ok:\d+$"),
                 CallbackQueryHandler(soltar_ped_confirm,   pattern=r"^soltar_ped:\d+$"),
                 CallbackQueryHandler(soltar_ped_ok,        pattern=r"^soltar_ped_ok:\d+$"),
-                # Bodega de BINs
+                # Bodega de BINs — navegación
                 CallbackQueryHandler(bin_menu,             pattern="^bin_menu$"),
                 CallbackQueryHandler(bin_agregar_inicio,   pattern="^bin_agregar$"),
                 CallbackQueryHandler(bin_ver_todos,        pattern="^bin_ver_todos$"),
                 CallbackQueryHandler(bin_ver_tiendas,      pattern="^bin_ver_tiendas$"),
                 CallbackQueryHandler(bin_ver_tienda,       pattern=r"^bin_ver:"),
+                # Bodega de BINs — eliminar (/rmv)
+                CommandHandler("rmv",                      rmv_menu),
+                CallbackQueryHandler(rmv_menu,             pattern="^rmv_menu$"),
+                CallbackQueryHandler(rmv_sel_tiendas,      pattern=r"^rmv_modo:"),
+                CallbackQueryHandler(rmv_confirmar_tienda, pattern=r"^rmv_del_tienda:"),
+                CallbackQueryHandler(rmv_ok_tienda,        pattern=r"^rmv_ok_tienda:"),
+                CallbackQueryHandler(rmv_sel_bins,         pattern=r"^rmv_bins:"),
+                CallbackQueryHandler(rmv_confirmar_bin,    pattern=r"^rmv_del_bin:\d+$"),
+                CallbackQueryHandler(rmv_ok_bin,           pattern=r"^rmv_ok_bin:\d+$"),
             ],
             # ── Pedidos — crear ───────────────────────────────────────────────
             ST_PED_TIPO: [
