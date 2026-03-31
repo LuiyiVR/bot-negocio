@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 
 import database as db
 from currency import parsear_monto, formato_mxn
+import bin_info
 
 # ── Config ────────────────────────────────────────────────────────────────────
 load_dotenv()
@@ -1676,21 +1677,40 @@ async def bin_buscar_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         )
         return ST_BIN_BUSCAR
 
-    resultados = db.buscar_bin(texto)
-    if not resultados:
-        await update.message.reply_text(
-            f"❌ El BIN `{texto}` *no está registrado* en la bodega.",
-            parse_mode="Markdown",
-            reply_markup=kb_volver_bins(),
-        )
-        return ST_MENU
+    # Consultar APIs e historial en paralelo
+    info_task = asyncio.create_task(bin_info.consultar_bin(texto))
+    registros = db.buscar_bin(texto)
+    info = await info_task
 
-    lineas = [f"✅ BIN `{texto}` registrado en {len(resultados)} tienda(s):\n"]
-    for r in resultados:
-        lineas.append(
-            f"🏪 *{safe(r['tienda'])}*\n"
-            f"   👤 {safe(r['agregado_por'])}  •  📅 {r['fecha'][:10]}"
-        )
+    lineas = []
+
+    # ── Info bancaria de APIs ──────────────────────────────────────────────
+    if info:
+        fuentes = info["fuentes"]
+        confianza = info["confianza"]
+        conf_str = f"{confianza}/{fuentes} fuentes" if fuentes > 1 else "1 fuente"
+        lineas += [
+            f"💳 BIN: `{texto}`",
+            f"🏦 Banco: *{safe(info['bank']) or 'Desconocido'}*",
+            f"🌍 País: {safe(info['country']) or 'Desconocido'}"
+            + (f" `{info['country_code']}`" if info.get("country_code") else ""),
+            f"💠 {safe(info['brand'])}  •  {safe(info['type'])}",
+            f"🔎 Consenso: _{conf_str}_",
+        ]
+    else:
+        lineas.append(f"💳 BIN: `{texto}`\n⚠️ _No se obtuvo info bancaria de las APIs_")
+
+    # ── Historial en la bodega ──────────────────────────────────────────────
+    if registros:
+        lineas.append(f"\n✅ *Registrado en {len(registros)} tienda(s):*")
+        for r in registros:
+            lineas.append(
+                f"🏪 *{safe(r['tienda'])}*\n"
+                f"   👤 {safe(r['agregado_por'])}  •  📅 {r['fecha'][:10]}"
+            )
+    else:
+        lineas.append("\n📭 _No está en la bodega aún._")
+
     await update.message.reply_text(
         "\n".join(lineas),
         parse_mode="Markdown",
@@ -1762,12 +1782,23 @@ async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: s
     nombre = tg_user.first_name or tg_user.username or str(tg_user.id)
 
     ok = db.agregar_bin(bin_num, tienda, nombre)
+    info = await bin_info.consultar_bin(bin_num)
 
     kb_post = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕  Otro BIN",          callback_data="bin_agregar")],
         [InlineKeyboardButton("🗂  Bodega de BINs",    callback_data="bin_menu")],
         [InlineKeyboardButton("🏠  Menú Principal",    callback_data="menu")],
     ])
+
+    def _info_lineas() -> str:
+        if not info:
+            return ""
+        return (
+            f"\n🏦 {safe(info['bank']) or 'Banco desconocido'}"
+            f" · 🌍 {safe(info['country']) or '?'}"
+            + (f" ({info['country_code']})" if info.get("country_code") else "")
+            + (f"\n💠 {info['brand']}  •  {info['type']}" if info.get("brand") else "")
+        )
 
     async def reply(text, **kw):
         if update.callback_query:
@@ -1780,7 +1811,8 @@ async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: s
         await reply(
             f"⚠️ *BIN ya registrado*\n\n"
             f"💳 `{bin_num}` en *{safe(tienda)}* ya fue registrado\n"
-            f"por *{safe(existente['agregado_por'])}* el {existente['fecha'][:10]}.",
+            f"por *{safe(existente['agregado_por'])}* el {existente['fecha'][:10]}."
+            + _info_lineas(),
             parse_mode="Markdown",
             reply_markup=kb_post,
         )
@@ -1789,7 +1821,8 @@ async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: s
             f"✅ *BIN registrado*\n\n"
             f"💳 BIN: `{bin_num}`\n"
             f"🏪 Tienda: *{safe(tienda)}*\n"
-            f"👤 Registrado por: {nombre}",
+            f"👤 Por: {nombre}"
+            + _info_lineas(),
             parse_mode="Markdown",
             reply_markup=kb_post,
         )
@@ -1797,7 +1830,8 @@ async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: s
             update.get_bot(), tg_user.id,
             f"🗂 *Nuevo BIN registrado*\n\n"
             f"💳 `{bin_num}` jala en *{tienda}*\n"
-            f"👤 Registrado por {nombre}",
+            f"👤 Por {nombre}"
+            + _info_lineas(),
             parse_mode="Markdown",
         )
 
