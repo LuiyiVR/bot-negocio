@@ -89,7 +89,8 @@ async def _notificar_socios(bot, sender_id: int, text: str, **kwargs):
     ST_BIN_NUM,
     ST_BIN_TIENDA,
     ST_BIN_NUEVA_TIENDA,
-) = range(24)
+    ST_BIN_BUSCAR,
+) = range(25)
 
 TIPOS_PEDIDO = ["✈️ Vuelo", "🏠 Airbnb", "🗺️ Tour", "🎡 Otro"]
 
@@ -1622,8 +1623,9 @@ async def bin_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("➕  Agregar BIN",        callback_data="bin_agregar")],
+            [InlineKeyboardButton("🔍  Buscar BIN",         callback_data="bin_buscar")],
             [
-                InlineKeyboardButton("🔍  Ver por Tienda",  callback_data="bin_ver_tiendas"),
+                InlineKeyboardButton("🏪  Ver por Tienda",  callback_data="bin_ver_tiendas"),
                 InlineKeyboardButton("📋  Ver Todos",       callback_data="bin_ver_todos"),
             ],
             [InlineKeyboardButton("🏠  Menú Principal",    callback_data="menu")],
@@ -1646,6 +1648,55 @@ async def bin_agregar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=kb_cancelar(),
     )
     return ST_BIN_NUM
+
+
+async def bin_buscar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    await q.edit_message_text(
+        "🔍 *Buscar BIN*\n\n"
+        "Escribe los *6 dígitos* del BIN que quieres consultar:\n"
+        "_Ej: `431274`_",
+        parse_mode="Markdown",
+        reply_markup=kb_volver_bins(),
+    )
+    return ST_BIN_BUSCAR
+
+
+async def bin_buscar_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    texto = update.message.text.strip().replace(" ", "")
+    if not texto.isdigit() or len(texto) != 6:
+        await update.message.reply_text(
+            "❌ Deben ser exactamente *6 dígitos*. Intenta de nuevo:",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+        return ST_BIN_BUSCAR
+
+    resultados = db.buscar_bin(texto)
+    if not resultados:
+        await update.message.reply_text(
+            f"❌ El BIN `{texto}` *no está registrado* en la bodega.",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+        return ST_MENU
+
+    lineas = [f"✅ BIN `{texto}` registrado en {len(resultados)} tienda(s):\n"]
+    for r in resultados:
+        lineas.append(
+            f"🏪 *{safe(r['tienda'])}*\n"
+            f"   👤 {safe(r['agregado_por'])}  •  📅 {r['fecha'][:10]}"
+        )
+    await update.message.reply_text(
+        "\n".join(lineas),
+        parse_mode="Markdown",
+        reply_markup=kb_volver_bins(),
+    )
+    return ST_MENU
 
 
 async def bin_num(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -2042,6 +2093,7 @@ def main():
                 # Bodega de BINs — navegación
                 CallbackQueryHandler(bin_menu,             pattern="^bin_menu$"),
                 CallbackQueryHandler(bin_agregar_inicio,   pattern="^bin_agregar$"),
+                CallbackQueryHandler(bin_buscar_inicio,    pattern="^bin_buscar$"),
                 CallbackQueryHandler(bin_ver_todos,        pattern="^bin_ver_todos$"),
                 CallbackQueryHandler(bin_ver_tiendas,      pattern="^bin_ver_tiendas$"),
                 CallbackQueryHandler(bin_ver_tienda,       pattern=r"^bin_ver:"),
@@ -2142,6 +2194,11 @@ def main():
                 CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
             ],
             # ── Bodega de BINs ────────────────────────────────────────────────
+            ST_BIN_BUSCAR: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bin_buscar_resultado),
+                CallbackQueryHandler(bin_menu,         pattern="^bin_menu$"),
+                CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
+            ],
             ST_BIN_NUM: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, bin_num),
                 CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),

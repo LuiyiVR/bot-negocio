@@ -401,6 +401,14 @@ def get_bin(bin_id: int):
         return conn.execute("SELECT * FROM bins WHERE id=?", (bin_id,)).fetchone()
 
 
+def buscar_bin(bin_num: str) -> list:
+    """Devuelve todos los registros donde ese BIN está registrado (puede funcionar en varias tiendas)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM bins WHERE bin=? ORDER BY tienda", (bin_num,)
+        ).fetchall()
+
+
 def delete_bin(bin_id: int):
     with get_conn() as conn:
         conn.execute("DELETE FROM bins WHERE id=?", (bin_id,))
