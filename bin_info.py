@@ -196,30 +196,26 @@ def _consenso(resultados: list[dict]) -> dict:
     }
 
 
-# ─── API pública ──────────────────────────────────────────────────────────────
+# Semáforo global: máximo 1 BIN consultando APIs a la vez.
+# Evita que múltiples BINs simultáneos disparen rate-limiting en las APIs gratuitas.
+_api_lock = asyncio.Semaphore(1)
 
-async def consultar_bin(bin_num: str) -> dict | None:
-    """
-    1. Busca en la BD — si ya se conoce el BIN lo devuelve sin tocar ninguna API.
-    2. Si no está en la BD consulta todas las APIs en paralelo, guarda el resultado
-       permanentemente y lo devuelve.
-    Campos del resultado: bank, country, country_code, brand, type, fuentes, confianza.
-    """
-    # ── 1. Caché persistente (BD) ─────────────────────────────────────────────
-    row = await asyncio.to_thread(db.get_bin_cache, bin_num)
-    if row:
-        return {
-            "bank":         row["bank"],
-            "country":      row["country"],
-            "country_code": row["country_code"],
-            "brand":        row["brand"],
-            "type":         row["type"],
-            "level":        row["level"],
-            "fuentes":      row["fuentes"],
-            "confianza":    row["confianza"],
-        }
 
-    # ── 2. Consultar APIs en paralelo ─────────────────────────────────────────
+def _row_to_dict(row) -> dict:
+    return {
+        "bank":         row["bank"],
+        "country":      row["country"],
+        "country_code": row["country_code"],
+        "brand":        row["brand"],
+        "type":         row["type"],
+        "level":        row["level"],
+        "fuentes":      row["fuentes"],
+        "confianza":    row["confianza"],
+    }
+
+
+async def _fetch_all(bin_num: str) -> dict | None:
+    """Consulta las APIs con reintentos ante rate-limit (máx 2 intentos, 2 s entre ellos)."""
     fetchers = [
         _fetch_binlist,
         _fetch_freebinchecker,
@@ -228,22 +224,46 @@ async def consultar_bin(bin_num: str) -> dict | None:
         _fetch_handyapi,
         _fetch_apiinjas,
     ]
-    raw = await asyncio.gather(*[asyncio.to_thread(fn, bin_num) for fn in fetchers],
-                               return_exceptions=True)
-    resultados = [r for r in raw if isinstance(r, dict) and r]
+    for intento in range(2):
+        if intento:
+            await asyncio.sleep(2)
+        raw = await asyncio.gather(*[asyncio.to_thread(fn, bin_num) for fn in fetchers],
+                                   return_exceptions=True)
+        resultados = [r for r in raw if isinstance(r, dict) and r]
+        if resultados:
+            return _consenso(resultados)
+    return None
 
-    if not resultados:
-        return None
 
-    info = _consenso(resultados)
+# ─── API pública ──────────────────────────────────────────────────────────────
 
-    # ── 3. Guardar en BD para siempre ─────────────────────────────────────────
-    await asyncio.to_thread(
-        db.set_bin_cache,
-        bin_num,
-        info["bank"], info["country"], info["country_code"],
-        info["brand"], info["type"], info["level"],
-        info["fuentes"], info["confianza"],
-    )
+async def consultar_bin(bin_num: str) -> dict | None:
+    """
+    1. Busca en la BD — si ya se conoce el BIN lo devuelve instantáneamente.
+    2. Si no está, espera su turno (semáforo), consulta todas las APIs con reintento
+       ante rate-limit, guarda el resultado en BD para siempre y lo devuelve.
+    """
+    # ── 1. Caché persistente ──────────────────────────────────────────────────
+    row = await asyncio.to_thread(db.get_bin_cache, bin_num)
+    if row:
+        return _row_to_dict(row)
 
-    return info
+    # ── 2. Un BIN a la vez para no triggear rate-limit ────────────────────────
+    async with _api_lock:
+        # Doble-check: otro coroutine pudo haberlo guardado mientras esperábamos
+        row = await asyncio.to_thread(db.get_bin_cache, bin_num)
+        if row:
+            return _row_to_dict(row)
+
+        info = await _fetch_all(bin_num)
+        if not info:
+            return None
+
+        await asyncio.to_thread(
+            db.set_bin_cache,
+            bin_num,
+            info["bank"], info["country"], info["country_code"],
+            info["brand"], info["type"], info["level"],
+            info["fuentes"], info["confianza"],
+        )
+        return info
