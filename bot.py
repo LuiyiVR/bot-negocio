@@ -1658,64 +1658,155 @@ async def bin_buscar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     q = update.callback_query
     await q.answer()
     await q.edit_message_text(
-        "🔍 *Buscar BIN*\n\n"
-        "Escribe los *6 dígitos* del BIN que quieres consultar:\n"
-        "_Ej: `431274`_",
+        "🔍 *Buscar BIN(s)*\n\n"
+        "Puedes enviar:\n"
+        "• Un BIN: `431274`\n"
+        "• Varios separados por espacio, coma o salto de línea:\n"
+        "  `431274 523456 412345`\n"
+        "• Un archivo *.txt* con un BIN por línea",
         parse_mode="Markdown",
         reply_markup=kb_volver_bins(),
     )
     return ST_BIN_BUSCAR
 
 
+async def _procesar_lista_bins(bins: list[str]) -> list[str]:
+    """Consulta info y bodega de cada BIN en paralelo. Devuelve lista de bloques de texto."""
+    async def _uno(b: str) -> str:
+        info_task = asyncio.create_task(bin_info.consultar_bin(b))
+        registros = await asyncio.to_thread(db.buscar_bin, b)
+        info = await info_task
+
+        if info:
+            banco  = safe(info["bank"]) or "Desconocido"
+            pais   = safe(info["country"]) or "?"
+            codigo = f" `{info['country_code']}`" if info.get("country_code") else ""
+            marca  = f"  💠 {info['brand']} {info['type']}" if info.get("brand") else ""
+            lineas = [f"💳 `{b}`  🏦 *{banco}*\n🌍 {pais}{codigo}{marca}"]
+        else:
+            lineas = [f"💳 `{b}`  ⚠️ _Sin info bancaria_"]
+
+        if registros:
+            tiendas = ", ".join(f"*{safe(r['tienda'])}*" for r in registros)
+            lineas.append(f"✅ Bodega: {tiendas}")
+        else:
+            lineas.append("📭 _No en bodega_")
+
+        return "\n".join(lineas)
+
+    return await asyncio.gather(*[_uno(b) for b in bins])
+
+
+async def _enviar_en_partes(message, bloques: list[str], reply_markup) -> None:
+    """Envía los bloques respetando el límite de 4096 chars de Telegram."""
+    separador = "\n\n─────────────────\n\n"
+    chunk = ""
+    for i, bloque in enumerate(bloques):
+        es_ultimo = i == len(bloques) - 1
+        nuevo = (chunk + separador + bloque) if chunk else bloque
+        if len(nuevo) > 4000:
+            await message.reply_text(chunk, parse_mode="Markdown")
+            chunk = bloque
+        else:
+            chunk = nuevo
+        if es_ultimo and chunk:
+            await message.reply_text(chunk, parse_mode="Markdown",
+                                     reply_markup=reply_markup)
+
+
 async def bin_buscar_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    texto = update.message.text.strip().replace(" ", "")
-    if not texto.isdigit() or len(texto) != 6:
+    import re
+    texto = update.message.text
+    bins = list(dict.fromkeys(re.findall(r'\b(\d{6})\b', texto)))  # únicos, en orden
+
+    if not bins:
         await update.message.reply_text(
-            "❌ Deben ser exactamente *6 dígitos*. Intenta de nuevo:",
+            "❌ No encontré ningún BIN de 6 dígitos. Intenta de nuevo:",
             parse_mode="Markdown",
             reply_markup=kb_volver_bins(),
         )
         return ST_BIN_BUSCAR
 
-    # Consultar APIs e historial en paralelo
-    info_task = asyncio.create_task(bin_info.consultar_bin(texto))
-    registros = db.buscar_bin(texto)
-    info = await info_task
+    if len(bins) == 1:
+        # Formato detallado para un solo BIN
+        b = bins[0]
+        info_task = asyncio.create_task(bin_info.consultar_bin(b))
+        registros = await asyncio.to_thread(db.buscar_bin, b)
+        info = await info_task
 
-    lineas = []
+        lineas = []
+        if info:
+            conf_str = f"{info['confianza']}/{info['fuentes']} fuentes"
+            lineas += [
+                f"💳 BIN: `{b}`",
+                f"🏦 Banco: *{safe(info['bank']) or 'Desconocido'}*",
+                f"🌍 País: {safe(info['country']) or 'Desconocido'}"
+                + (f" `{info['country_code']}`" if info.get("country_code") else ""),
+                f"💠 {safe(info['brand'])}  •  {safe(info['type'])}",
+                f"🔎 Consenso: _{conf_str}_",
+            ]
+        else:
+            lineas.append(f"💳 BIN: `{b}`\n⚠️ _No se obtuvo info bancaria_")
 
-    # ── Info bancaria de APIs ──────────────────────────────────────────────
-    if info:
-        fuentes = info["fuentes"]
-        confianza = info["confianza"]
-        conf_str = f"{confianza}/{fuentes} fuentes" if fuentes > 1 else "1 fuente"
-        lineas += [
-            f"💳 BIN: `{texto}`",
-            f"🏦 Banco: *{safe(info['bank']) or 'Desconocido'}*",
-            f"🌍 País: {safe(info['country']) or 'Desconocido'}"
-            + (f" `{info['country_code']}`" if info.get("country_code") else ""),
-            f"💠 {safe(info['brand'])}  •  {safe(info['type'])}",
-            f"🔎 Consenso: _{conf_str}_",
-        ]
-    else:
-        lineas.append(f"💳 BIN: `{texto}`\n⚠️ _No se obtuvo info bancaria de las APIs_")
+        if registros:
+            lineas.append(f"\n✅ *Registrado en {len(registros)} tienda(s):*")
+            for r in registros:
+                lineas.append(
+                    f"🏪 *{safe(r['tienda'])}*\n"
+                    f"   👤 {safe(r['agregado_por'])}  •  📅 {r['fecha'][:10]}"
+                )
+        else:
+            lineas.append("\n📭 _No está en la bodega aún._")
 
-    # ── Historial en la bodega ──────────────────────────────────────────────
-    if registros:
-        lineas.append(f"\n✅ *Registrado en {len(registros)} tienda(s):*")
-        for r in registros:
-            lineas.append(
-                f"🏪 *{safe(r['tienda'])}*\n"
-                f"   👤 {safe(r['agregado_por'])}  •  📅 {r['fecha'][:10]}"
-            )
-    else:
-        lineas.append("\n📭 _No está en la bodega aún._")
+        await update.message.reply_text("\n".join(lineas), parse_mode="Markdown",
+                                        reply_markup=kb_volver_bins())
+        return ST_MENU
 
-    await update.message.reply_text(
-        "\n".join(lineas),
-        parse_mode="Markdown",
-        reply_markup=kb_volver_bins(),
+    # Múltiples BINs — formato compacto
+    aviso = await update.message.reply_text(
+        f"⏳ Consultando {len(bins)} BINs...", parse_mode="Markdown"
     )
+    bloques = await _procesar_lista_bins(bins)
+    await aviso.delete()
+    encabezado = f"🔍 *Resultados — {len(bins)} BINs*\n"
+    bloques[0] = encabezado + bloques[0]
+    await _enviar_en_partes(update.message, bloques, kb_volver_bins())
+    return ST_MENU
+
+
+async def bin_buscar_txt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Recibe un archivo .txt con BINs y los procesa todos."""
+    import re
+    doc = update.message.document
+    if not doc.file_name.lower().endswith(".txt"):
+        await update.message.reply_text(
+            "❌ Solo acepto archivos *.txt*. Intenta de nuevo:",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+        return ST_BIN_BUSCAR
+
+    tg_file = await ctx.bot.get_file(doc.file_id)
+    raw = await tg_file.download_as_bytearray()
+    texto = raw.decode("utf-8", errors="ignore")
+    bins = list(dict.fromkeys(re.findall(r'\b(\d{6})\b', texto)))
+
+    if not bins:
+        await update.message.reply_text(
+            "❌ No encontré BINs de 6 dígitos en el archivo.",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+        return ST_BIN_BUSCAR
+
+    aviso = await update.message.reply_text(
+        f"⏳ Consultando {len(bins)} BINs del archivo...", parse_mode="Markdown"
+    )
+    bloques = await _procesar_lista_bins(bins)
+    await aviso.delete()
+    encabezado = f"🔍 *Resultados del archivo — {len(bins)} BINs*\n"
+    bloques[0] = encabezado + bloques[0]
+    await _enviar_en_partes(update.message, bloques, kb_volver_bins())
     return ST_MENU
 
 
@@ -2229,7 +2320,8 @@ def main():
             ],
             # ── Bodega de BINs ────────────────────────────────────────────────
             ST_BIN_BUSCAR: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, bin_buscar_resultado),
+                MessageHandler(filters.Document.ALL,              bin_buscar_txt),
+                MessageHandler(filters.TEXT & ~filters.COMMAND,   bin_buscar_resultado),
                 CallbackQueryHandler(bin_menu,         pattern="^bin_menu$"),
                 CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
             ],
