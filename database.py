@@ -73,6 +73,18 @@ def init_db():
             INSERT OR IGNORE INTO config (clave, valor) VALUES ('inversion_inicial', '15000');
             INSERT OR IGNORE INTO config (clave, valor) VALUES ('socios', 'LAVR,FEDE,SPAIDER RATA');
 
+            CREATE TABLE IF NOT EXISTS bin_cache (
+                bin TEXT PRIMARY KEY,
+                bank TEXT NOT NULL DEFAULT '',
+                country TEXT NOT NULL DEFAULT '',
+                country_code TEXT NOT NULL DEFAULT '',
+                brand TEXT NOT NULL DEFAULT '',
+                type TEXT NOT NULL DEFAULT '',
+                fuentes INTEGER NOT NULL DEFAULT 0,
+                confianza INTEGER NOT NULL DEFAULT 0,
+                fecha TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS tiendas_bins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL UNIQUE
@@ -399,6 +411,24 @@ def todos_los_bins() -> list:
 def get_bin(bin_id: int):
     with get_conn() as conn:
         return conn.execute("SELECT * FROM bins WHERE id=?", (bin_id,)).fetchone()
+
+
+def get_bin_cache(bin_num: str):
+    """Devuelve la info bancaria guardada para este BIN, o None si no existe."""
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM bin_cache WHERE bin=?", (bin_num,)).fetchone()
+
+
+def set_bin_cache(bin_num: str, bank: str, country: str, country_code: str,
+                  brand: str, card_type: str, fuentes: int, confianza: int):
+    """Guarda (o actualiza) la info bancaria de un BIN en la BD."""
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO bin_cache
+            (bin, bank, country, country_code, brand, type, fuentes, confianza, fecha)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (bin_num, bank, country, country_code, brand, card_type, fuentes, confianza, fecha))
 
 
 def buscar_bin(bin_num: str) -> list:
