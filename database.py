@@ -72,6 +72,19 @@ def init_db():
 
             INSERT OR IGNORE INTO config (clave, valor) VALUES ('inversion_inicial', '15000');
             INSERT OR IGNORE INTO config (clave, valor) VALUES ('socios', 'LAVR,FEDE,SPAIDER RATA');
+
+            CREATE TABLE IF NOT EXISTS tiendas_bins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL UNIQUE
+            );
+
+            CREATE TABLE IF NOT EXISTS bins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bin TEXT NOT NULL,
+                tienda TEXT NOT NULL,
+                agregado_por TEXT NOT NULL,
+                fecha TEXT NOT NULL
+            );
         """)
 
 
@@ -326,3 +339,63 @@ def get_socios():
 
 def set_socios(lista):
     set_config("socios", ",".join(lista))
+
+
+# ─────────────────────────── BODEGA DE BINS ──────────────────────────────────
+
+def agregar_tienda_bin(nombre: str) -> bool:
+    """Agrega tienda al catálogo. Devuelve False si ya existía."""
+    with get_conn() as conn:
+        try:
+            conn.execute("INSERT INTO tiendas_bins (nombre) VALUES (?)", (nombre.strip(),))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def get_tiendas_bins() -> list:
+    with get_conn() as conn:
+        return conn.execute("SELECT nombre FROM tiendas_bins ORDER BY nombre").fetchall()
+
+
+def agregar_bin(bin_num: str, tienda: str, agregado_por: str) -> bool:
+    """Registra un BIN. Devuelve False si ese BIN+tienda ya existe."""
+    with get_conn() as conn:
+        ya = conn.execute(
+            "SELECT id FROM bins WHERE bin=? AND tienda=?", (bin_num, tienda)
+        ).fetchone()
+        if ya:
+            return False
+        fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "INSERT INTO bins (bin, tienda, agregado_por, fecha) VALUES (?,?,?,?)",
+            (bin_num, tienda, agregado_por, fecha),
+        )
+        return True
+
+
+def get_bin_existente(bin_num: str, tienda: str):
+    """Devuelve el registro existente de ese BIN+tienda, o None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM bins WHERE bin=? AND tienda=?", (bin_num, tienda)
+        ).fetchone()
+
+
+def bins_por_tienda(tienda: str) -> list:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM bins WHERE tienda=? ORDER BY bin", (tienda,)
+        ).fetchall()
+
+
+def todos_los_bins() -> list:
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM bins ORDER BY tienda, bin"
+        ).fetchall()
+
+
+def delete_bin(bin_id: int):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM bins WHERE id=?", (bin_id,))

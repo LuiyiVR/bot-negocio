@@ -85,7 +85,11 @@ async def _notificar_socios(bot, sender_id: int, text: str, **kwargs):
     ST_INV_AGREGAR_MONTO,
     # Reportes descargables — otro mes
     ST_REP_OTRO_MES,
-) = range(21)
+    # Bodega de BINs
+    ST_BIN_NUM,
+    ST_BIN_TIENDA,
+    ST_BIN_NUEVA_TIENDA,
+) = range(24)
 
 TIPOS_PEDIDO = ["✈️ Vuelo", "🏠 Airbnb", "🗺️ Tour", "🎡 Otro"]
 
@@ -130,6 +134,7 @@ def kb_menu():
             InlineKeyboardButton("🏦  Ver Inversión",      callback_data="ver_inversion"),
             InlineKeyboardButton("💸  Gasto Inversión",    callback_data="gasto_inversion"),
         ],
+        [InlineKeyboardButton("🗂  Bodega de BINs",        callback_data="bin_menu")],
     ])
 
 
@@ -177,6 +182,24 @@ def kb_volver_pedidos():
         [InlineKeyboardButton("📦  Volver a Pedidos", callback_data="pedidos_menu")],
         [InlineKeyboardButton("🏠  Menú Principal",   callback_data="menu")],
     ])
+
+
+def kb_volver_bins():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗂  Bodega de BINs",   callback_data="bin_menu")],
+        [InlineKeyboardButton("🏠  Menú Principal",   callback_data="menu")],
+    ])
+
+
+def kb_tiendas_bin():
+    tiendas = db.get_tiendas_bins()
+    filas = [
+        [InlineKeyboardButton(t["nombre"], callback_data=f"bin_tienda:{t['nombre']}")]
+        for t in tiendas
+    ]
+    filas.append([InlineKeyboardButton("➕  Nueva tienda", callback_data="bin_nueva_tienda")])
+    filas.append([InlineKeyboardButton("❌  Cancelar",     callback_data="menu")])
+    return InlineKeyboardMarkup(filas)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1581,6 +1604,237 @@ async def del_pedido_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  BODEGA DE BINS
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def bin_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    todos = db.todos_los_bins()
+    tiendas = db.get_tiendas_bins()
+    await q.edit_message_text(
+        f"🗂 *Bodega de BINs*\n\n"
+        f"💳 {len(todos)} BINs  |  🏪 {len(tiendas)} tiendas\n\n"
+        f"¿Qué deseas hacer?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕  Agregar BIN",        callback_data="bin_agregar")],
+            [
+                InlineKeyboardButton("🔍  Ver por Tienda",  callback_data="bin_ver_tiendas"),
+                InlineKeyboardButton("📋  Ver Todos",       callback_data="bin_ver_todos"),
+            ],
+            [InlineKeyboardButton("🏠  Menú Principal",    callback_data="menu")],
+        ]),
+    )
+    return ST_MENU
+
+
+async def bin_agregar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    await q.edit_message_text(
+        "🗂 *Agregar BIN*\n\n"
+        "Escribe los primeros *6 dígitos* de la tarjeta:\n"
+        "_Ej: `431274`_",
+        parse_mode="Markdown",
+        reply_markup=kb_cancelar(),
+    )
+    return ST_BIN_NUM
+
+
+async def bin_num(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    texto = update.message.text.strip().replace(" ", "")
+    if not texto.isdigit() or len(texto) != 6:
+        await update.message.reply_text(
+            "❌ Deben ser exactamente *6 dígitos*. Intenta de nuevo:",
+            parse_mode="Markdown",
+            reply_markup=kb_cancelar(),
+        )
+        return ST_BIN_NUM
+
+    ctx.user_data["bin_num"] = texto
+    tiendas = db.get_tiendas_bins()
+
+    if not tiendas:
+        await update.message.reply_text(
+            f"🗂 BIN: `{texto}`\n\n"
+            "No hay tiendas registradas aún.\n"
+            "Escribe el nombre del establecimiento donde jala:",
+            parse_mode="Markdown",
+            reply_markup=kb_cancelar(),
+        )
+        return ST_BIN_NUEVA_TIENDA
+
+    await update.message.reply_text(
+        f"🗂 BIN: `{texto}`\n\n¿En qué tienda/establecimiento jala?",
+        parse_mode="Markdown",
+        reply_markup=kb_tiendas_bin(),
+    )
+    return ST_BIN_TIENDA
+
+
+async def bin_tienda_sel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    tienda = q.data.split(":", 1)[1]
+    return await _guardar_bin(update, ctx, tienda)
+
+
+async def bin_nueva_tienda_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    q = update.callback_query
+    await q.answer()
+    await q.edit_message_text(
+        "🏪 *Nueva Tienda*\n\n"
+        "Escribe el nombre del establecimiento:\n"
+        "_Ej: Amazon, Airbnb, Walmart_",
+        parse_mode="Markdown",
+        reply_markup=kb_cancelar(),
+    )
+    return ST_BIN_NUEVA_TIENDA
+
+
+async def bin_nueva_tienda_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    nombre = update.message.text.strip()
+    db.agregar_tienda_bin(nombre)
+    return await _guardar_bin(update, ctx, nombre)
+
+
+async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: str) -> int:
+    bin_num = ctx.user_data.pop("bin_num", "")
+    tg_user = update.effective_user
+    nombre = tg_user.first_name or tg_user.username or str(tg_user.id)
+
+    ok = db.agregar_bin(bin_num, tienda, nombre)
+
+    kb_post = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕  Otro BIN",          callback_data="bin_agregar")],
+        [InlineKeyboardButton("🗂  Bodega de BINs",    callback_data="bin_menu")],
+        [InlineKeyboardButton("🏠  Menú Principal",    callback_data="menu")],
+    ])
+
+    async def reply(text, **kw):
+        if update.callback_query:
+            await update.callback_query.edit_message_text(text, **kw)
+        else:
+            await update.message.reply_text(text, **kw)
+
+    if not ok:
+        existente = db.get_bin_existente(bin_num, tienda)
+        await reply(
+            f"⚠️ *BIN ya registrado*\n\n"
+            f"💳 `{bin_num}` en *{safe(tienda)}* ya fue registrado\n"
+            f"por *{safe(existente['agregado_por'])}* el {existente['fecha'][:10]}.",
+            parse_mode="Markdown",
+            reply_markup=kb_post,
+        )
+    else:
+        await reply(
+            f"✅ *BIN registrado*\n\n"
+            f"💳 BIN: `{bin_num}`\n"
+            f"🏪 Tienda: *{safe(tienda)}*\n"
+            f"👤 Registrado por: {nombre}",
+            parse_mode="Markdown",
+            reply_markup=kb_post,
+        )
+        await _notificar_socios(
+            update.get_bot(), tg_user.id,
+            f"🗂 *Nuevo BIN registrado*\n\n"
+            f"💳 `{bin_num}` jala en *{tienda}*\n"
+            f"👤 Registrado por {nombre}",
+            parse_mode="Markdown",
+        )
+
+    ctx.user_data.clear()
+    return ST_MENU
+
+
+async def bin_ver_todos(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    bins = db.todos_los_bins()
+    if not bins:
+        await q.edit_message_text("📭 No hay BINs registrados aún.", reply_markup=kb_volver_bins())
+        return ST_MENU
+
+    por_tienda: dict = {}
+    for b in bins:
+        por_tienda.setdefault(b["tienda"], []).append(b["bin"])
+
+    lineas = [f"📋 *Todos los BINs* ({len(bins)})\n{SEP}"]
+    for tienda, lista in sorted(por_tienda.items()):
+        lineas.append(f"🏪 *{safe(tienda)}*")
+        lineas.append("  " + "   ".join(f"`{b}`" for b in lista))
+
+    await q.edit_message_text(
+        "\n".join(lineas),
+        parse_mode="Markdown",
+        reply_markup=kb_volver_bins(),
+    )
+    return ST_MENU
+
+
+async def bin_ver_tiendas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    tiendas = db.get_tiendas_bins()
+    if not tiendas:
+        await q.edit_message_text("📭 No hay tiendas registradas.", reply_markup=kb_volver_bins())
+        return ST_MENU
+
+    filas = [
+        [InlineKeyboardButton(t["nombre"], callback_data=f"bin_ver:{t['nombre']}")]
+        for t in tiendas
+    ]
+    filas.append([InlineKeyboardButton("🏠  Menú Principal", callback_data="menu")])
+    await q.edit_message_text(
+        "🔍 *Ver BINs por Tienda*\n\nSelecciona la tienda:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(filas),
+    )
+    return ST_MENU
+
+
+async def bin_ver_tienda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    tienda = q.data.split(":", 1)[1]
+    bins = db.bins_por_tienda(tienda)
+    if not bins:
+        await q.edit_message_text(
+            f"📭 No hay BINs para *{safe(tienda)}* aún.",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+        return ST_MENU
+
+    lineas = [f"🏪 *{safe(tienda)}* — {len(bins)} BINs\n{SEP}"]
+    for b in bins:
+        lineas.append(f"  💳 `{b['bin']}` — {safe(b['agregado_por'])} · {b['fecha'][:10]}")
+
+    await q.edit_message_text(
+        "\n".join(lineas),
+        parse_mode="Markdown",
+        reply_markup=kb_volver_bins(),
+    )
+    return ST_MENU
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1633,6 +1887,12 @@ def main():
                 CallbackQueryHandler(del_pedido_ok,        pattern=r"^del_pedido_ok:\d+$"),
                 CallbackQueryHandler(soltar_ped_confirm,   pattern=r"^soltar_ped:\d+$"),
                 CallbackQueryHandler(soltar_ped_ok,        pattern=r"^soltar_ped_ok:\d+$"),
+                # Bodega de BINs
+                CallbackQueryHandler(bin_menu,             pattern="^bin_menu$"),
+                CallbackQueryHandler(bin_agregar_inicio,   pattern="^bin_agregar$"),
+                CallbackQueryHandler(bin_ver_todos,        pattern="^bin_ver_todos$"),
+                CallbackQueryHandler(bin_ver_tiendas,      pattern="^bin_ver_tiendas$"),
+                CallbackQueryHandler(bin_ver_tienda,       pattern=r"^bin_ver:"),
             ],
             # ── Pedidos — crear ───────────────────────────────────────────────
             ST_PED_TIPO: [
@@ -1718,6 +1978,20 @@ def main():
             ],
             ST_INV_AGREGAR_MONTO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, inv_agregar_monto),
+                CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
+            ],
+            # ── Bodega de BINs ────────────────────────────────────────────────
+            ST_BIN_NUM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bin_num),
+                CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
+            ],
+            ST_BIN_TIENDA: [
+                CallbackQueryHandler(bin_tienda_sel,          pattern=r"^bin_tienda:"),
+                CallbackQueryHandler(bin_nueva_tienda_inicio, pattern="^bin_nueva_tienda$"),
+                CallbackQueryHandler(mostrar_menu,            pattern="^menu$"),
+            ],
+            ST_BIN_NUEVA_TIENDA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bin_nueva_tienda_texto),
                 CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
             ],
         },
