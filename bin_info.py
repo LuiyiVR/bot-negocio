@@ -47,14 +47,26 @@ def _s(val) -> str:
 
 # ─── Parsers por fuente ───────────────────────────────────────────────────────
 
+_LEVEL_KEYWORDS = ["infinite", "platinum", "gold", "silver", "black", "classic",
+                   "standard", "business", "corporate", "prepaid", "electron",
+                   "world", "signature", "premier"]
+
+def _extract_level_from_brand(brand_str: str) -> str:
+    """Si el nombre de marca contiene el nivel (ej: 'Visa Classic'), lo extrae."""
+    low = brand_str.lower()
+    for kw in _LEVEL_KEYWORDS:
+        if kw in low:
+            return kw.capitalize()
+    return ""
+
 def _parse_binlist(d: dict) -> dict | None:
     bank    = _s(d.get("bank", {}).get("name"))
     country = _s(d.get("country", {}).get("name"))
     code    = _s(d.get("country", {}).get("alpha2"))
     brand   = _s(d.get("scheme", "")).upper()
+    full_brand = _s(d.get("brand", ""))          # puede ser "Visa Classic", "Mastercard Gold"…
     ctype   = _s(d.get("type", "")).capitalize()
-    # binlist no tiene nivel explícito; "prepaid" es lo más cercano
-    level   = "Prepaid" if d.get("prepaid") else ""
+    level   = _extract_level_from_brand(full_brand) or ("Prepaid" if d.get("prepaid") else "")
     return {"bank": bank, "country": country, "country_code": code,
             "brand": brand, "type": ctype, "level": level} if bank or country else None
 
@@ -120,6 +132,19 @@ def _parse_apiinjas(d) -> dict | None:
             "brand": brand, "type": ctype, "level": level} if bank or country else None
 
 
+def _parse_antipublic(d: dict) -> dict | None:
+    # {"bin":"431274","brand":"VISA","bank":"JP Morgan","country_name":"United States",
+    #  "country_code":"US","type":"DEBIT","level":"CLASSIC"}
+    bank    = _s(d.get("bank"))
+    country = _s(d.get("country_name"))
+    code    = _s(d.get("country_code"))
+    brand   = _s(d.get("brand", "")).upper()
+    ctype   = _s(d.get("type", "")).capitalize()
+    level   = _s(d.get("level", "")).capitalize()
+    return {"bank": bank, "country": country, "country_code": code,
+            "brand": brand, "type": ctype, "level": level} if bank or country else None
+
+
 # ─── Fetch functions (bloqueantes, corren en threads) ─────────────────────────
 
 def _fetch_binlist(b: str) -> dict | None:
@@ -130,6 +155,11 @@ def _fetch_binlist(b: str) -> dict | None:
 def _fetch_freebinchecker(b: str) -> dict | None:
     d = _get(f"https://api.freebinchecker.com/bin/{b}")
     return _parse_freebinchecker(d) if d else None
+
+
+def _fetch_antipublic(b: str) -> dict | None:
+    d = _get(f"https://bins.antipublic.xyz/bins/{b}")
+    return _parse_antipublic(d) if isinstance(d, dict) else None
 
 
 def _fetch_bintable(b: str) -> dict | None:
@@ -219,6 +249,7 @@ async def _fetch_all(bin_num: str) -> dict | None:
     fetchers = [
         _fetch_binlist,
         _fetch_freebinchecker,
+        _fetch_antipublic,
         _fetch_bintable,
         _fetch_binsearch,
         _fetch_handyapi,
