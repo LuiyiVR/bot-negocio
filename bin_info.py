@@ -27,7 +27,7 @@ _APIINJAS_KEY   = os.getenv("APIINJAS_KEY", "")
 
 # ─── Caché en memoria (BIN info no cambia → 24 h) ─────────────────────────────
 _cache: dict = {}
-_TTL = timedelta(hours=24)
+_TTL = timedelta(days=3650)
 
 
 # ─── Helper HTTP ──────────────────────────────────────────────────────────────
