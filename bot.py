@@ -7,6 +7,7 @@ Bot de Telegram — Negocio Airbnb / Vuelos / Tours
 
 import io
 import os
+import asyncio
 import logging
 from datetime import datetime
 from collections import defaultdict
@@ -48,6 +49,17 @@ def fmt_gan(monto: float) -> str:
     """Formatea ganancia: siempre positivo, emoji indica dirección."""
     ico = "📈" if monto >= 0 else "📉"
     return f"{ico} {formato_mxn(abs(monto))}"
+
+
+async def _notificar_socios(bot, sender_id: int, text: str, **kwargs):
+    """Envía un mensaje a todos los socios excepto al remitente, en paralelo."""
+    async def _send(uid):
+        try:
+            await bot.send_message(chat_id=uid, text=text, **kwargs)
+        except Exception as e:
+            logger.warning(f"No se pudo notificar a {uid}: {e}")
+    await asyncio.gather(*[_send(uid) for uid in ALLOWED_IDS if uid != sender_id])
+
 
 # ── Estados ───────────────────────────────────────────────────────────────────
 (
@@ -297,7 +309,7 @@ async def ped_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def ped_costo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        monto, moneda, mxn, tc = parsear_monto(update.message.text)
+        monto, moneda, mxn, tc = await parsear_monto(update.message.text)
     except ValueError as e:
         await update.message.reply_text(
             f"❌ {e}\n_Usa `2000 MX` o `120 USD`_",
@@ -324,7 +336,7 @@ async def ped_costo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def ped_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        monto, moneda, mxn, tc = parsear_monto(update.message.text)
+        monto, moneda, mxn, tc = await parsear_monto(update.message.text)
     except ValueError as e:
         await update.message.reply_text(
             f"❌ {e}\n_Usa `2500 MX` o `150 USD`_",
@@ -361,18 +373,11 @@ async def ped_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     kb_notif = InlineKeyboardMarkup([[
         InlineKeyboardButton(f"✅  Aceptar pedido #{pedido_id}", callback_data=f"aceptar_ped:{pedido_id}")
     ]])
-
-    for uid in ALLOWED_IDS:
-        if uid != tg_user.id:
-            try:
-                await update.get_bot().send_message(
-                    chat_id=uid,
-                    text=f"🔔 *Nuevo Pedido Disponible*\n\n{txt_notif}",
-                    parse_mode="Markdown",
-                    reply_markup=kb_notif,
-                )
-            except Exception as e:
-                logger.warning(f"No se pudo notificar a {uid}: {e}")
+    await _notificar_socios(
+        update.get_bot(), tg_user.id,
+        f"🔔 *Nuevo Pedido Disponible*\n\n{txt_notif}",
+        parse_mode="Markdown", reply_markup=kb_notif,
+    )
 
     txt_tc = f"\n_TC: ${tc_final:.2f} MXN/USD_" if tc_final != 1.0 else ""
 
@@ -579,21 +584,14 @@ async def aceptar_ped_confirmar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     gan = pedido["monto_cobrado_mxn"] - pedido["monto_compra_mxn"]
 
     # Notificar a los demás
-    for uid in ALLOWED_IDS:
-        if uid != tg_user.id:
-            try:
-                await update.get_bot().send_message(
-                    chat_id=uid,
-                    text=(
-                        f"🔄 *Pedido #{pedido_id} en proceso*\n\n"
-                        f"*{nombre}* aceptó el pedido:\n"
-                        f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
-                        f"📈 Ganancia estimada: *{formato_mxn(gan)}*"
-                    ),
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logger.warning(f"No se pudo notificar a {uid}: {e}")
+    await _notificar_socios(
+        update.get_bot(), tg_user.id,
+        f"🔄 *Pedido #{pedido_id} en proceso*\n\n"
+        f"*{nombre}* aceptó el pedido:\n"
+        f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
+        f"📈 Ganancia estimada: *{formato_mxn(gan)}*",
+        parse_mode="Markdown",
+    )
 
     await q.edit_message_text(
         f"🔄 *Pedido #{pedido_id} reservado para ti*\n"
@@ -673,22 +671,15 @@ async def completar_ped_tarjeta(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
     txt_tc = f"\n_TC: ${pedido['tipo_cambio']:.2f}_" if pedido["tipo_cambio"] != 1.0 else ""
 
     # Notificar a los demás que quedó cerrado
-    for uid in ALLOWED_IDS:
-        if uid != tg_user.id:
-            try:
-                await update.get_bot().send_message(
-                    chat_id=uid,
-                    text=(
-                        f"✅ *Pedido #{pedido_id} completado*\n\n"
-                        f"*{nombre}* cerró el pedido:\n"
-                        f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
-                        f"💳 Tarjeta: `****{tarjeta[-4:]}`\n"
-                        f"Ganancia registrada: *{fmt_gan(gan)}*"
-                    ),
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logger.warning(f"No se pudo notificar a {uid}: {e}")
+    await _notificar_socios(
+        update.get_bot(), tg_user.id,
+        f"✅ *Pedido #{pedido_id} completado*\n\n"
+        f"*{nombre}* cerró el pedido:\n"
+        f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
+        f"💳 Tarjeta: `****{tarjeta[-4:]}`\n"
+        f"Ganancia registrada: *{fmt_gan(gan)}*",
+        parse_mode="Markdown",
+    )
 
     await update.message.reply_text(
         f"🎉 *¡Pedido #{pedido_id} completado!*\n"
@@ -785,7 +776,7 @@ async def nv_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def nv_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        monto, moneda, mxn, tc = parsear_monto(update.message.text)
+        monto, moneda, mxn, tc = await parsear_monto(update.message.text)
     except ValueError as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=kb_cancelar())
         return ST_VT_COBRADO
@@ -803,7 +794,7 @@ async def nv_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def nv_gastado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        monto, moneda, mxn, tc = parsear_monto(update.message.text)
+        monto, moneda, mxn, tc = await parsear_monto(update.message.text)
     except ValueError as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=kb_cancelar())
         return ST_VT_GASTADO
@@ -1260,7 +1251,7 @@ async def inv_editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 
 async def inv_editar_monto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        _, _, mxn, tc = parsear_monto(update.message.text)
+        _, _, mxn, tc = await parsear_monto(update.message.text)
     except ValueError as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=kb_cancelar())
         return ST_INV_EDITAR_MONTO
@@ -1295,7 +1286,7 @@ async def inv_agregar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
 async def inv_agregar_monto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        _, _, mxn, tc = parsear_monto(update.message.text)
+        _, _, mxn, tc = await parsear_monto(update.message.text)
     except ValueError as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=kb_cancelar())
         return ST_INV_AGREGAR_MONTO
@@ -1376,7 +1367,7 @@ async def gasto_inv_concepto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
 async def gasto_inv_monto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     try:
-        monto, moneda, mxn, tc = parsear_monto(update.message.text)
+        monto, moneda, mxn, tc = await parsear_monto(update.message.text)
     except ValueError as e:
         await update.message.reply_text(f"❌ {e}", reply_markup=kb_cancelar())
         return ST_INV_MONTO
@@ -1479,24 +1470,16 @@ async def soltar_ped_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         InlineKeyboardButton(f"✅ Aceptar pedido #{pedido_id}", callback_data=f"aceptar_ped:{pedido_id}")
     ]])
     gan = pedido["monto_cobrado_mxn"] - pedido["monto_compra_mxn"]
-    for uid in ALLOWED_IDS:
-        if uid != tg_user.id:
-            try:
-                await update.get_bot().send_message(
-                    chat_id=uid,
-                    text=(
-                        f"🔓 *Pedido #{pedido_id} disponible de nuevo*\n\n"
-                        f"*{nombre}* lo soltó:\n"
-                        f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
-                        f"💸 Total: {formato_mxn(pedido['monto_compra_mxn'])}\n"
-                        f"💰 Cobrado: {formato_mxn(pedido['monto_cobrado_mxn'])}\n"
-                        f"📈 Ganancia: *{formato_mxn(gan)}*"
-                    ),
-                    parse_mode="Markdown",
-                    reply_markup=kb_notif,
-                )
-            except Exception as e:
-                logger.warning(f"No se pudo notificar a {uid}: {e}")
+    await _notificar_socios(
+        update.get_bot(), tg_user.id,
+        f"🔓 *Pedido #{pedido_id} disponible de nuevo*\n\n"
+        f"*{nombre}* lo soltó:\n"
+        f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
+        f"💸 Total: {formato_mxn(pedido['monto_compra_mxn'])}\n"
+        f"💰 Cobrado: {formato_mxn(pedido['monto_cobrado_mxn'])}\n"
+        f"📈 Ganancia: *{formato_mxn(gan)}*",
+        parse_mode="Markdown", reply_markup=kb_notif,
+    )
 
     await q.edit_message_text(
         f"🔓 Pedido *#{pedido_id}* soltado.\n"

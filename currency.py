@@ -8,6 +8,7 @@ Formato OBLIGATORIO:
 Sin sufijo → error, el usuario debe especificar siempre.
 """
 import re
+import asyncio
 import urllib.request
 import json
 from datetime import datetime, timedelta
@@ -17,29 +18,28 @@ _CACHE_TTL_MIN = 60
 
 
 def _fetch_usd_mxn() -> float:
-    """Obtiene el tipo de cambio USD→MXN desde open.er-api.com (sin key)."""
+    """Obtiene el tipo de cambio USD→MXN desde open.er-api.com (sin key). Bloqueante."""
     url = "https://open.er-api.com/v6/latest/USD"
     try:
         with urllib.request.urlopen(url, timeout=8) as resp:
             data = json.loads(resp.read())
         return float(data["rates"]["MXN"])
     except Exception:
-        # Fallback si no hay internet: tipo de cambio aproximado
         return 17.5
 
 
-def get_tipo_cambio() -> float:
-    """Devuelve USD/MXN usando caché de 60 minutos."""
+async def get_tipo_cambio() -> float:
+    """Devuelve USD/MXN usando caché de 60 minutos. No bloquea el event loop."""
     now = datetime.utcnow()
     if _cache.get("rate") and (now - _cache["ts"]) < timedelta(minutes=_CACHE_TTL_MIN):
         return _cache["rate"]
-    rate = _fetch_usd_mxn()
+    rate = await asyncio.to_thread(_fetch_usd_mxn)
     _cache["rate"] = rate
     _cache["ts"] = now
     return rate
 
 
-def parsear_monto(texto: str):
+async def parsear_monto(texto: str):
     """
     Parsea un string de monto.
 
@@ -47,7 +47,6 @@ def parsear_monto(texto: str):
     moneda: 'MXN' o 'USD'
     """
     texto = texto.strip().upper().replace(",", "")
-    # Busca número seguido de sufijo de moneda
     m = re.match(r"^([\d.]+)\s*(USD|MX|MXN|PESOS|DOLARES|DÓLARES)$", texto)
     if not m:
         raise ValueError(
@@ -61,7 +60,7 @@ def parsear_monto(texto: str):
 
     if sufijo in ("USD", "DOLARES", "DÓLARES"):
         moneda = "USD"
-        tc = get_tipo_cambio()
+        tc = await get_tipo_cambio()
         monto_mxn = round(monto * tc, 2)
     else:
         moneda = "MXN"
