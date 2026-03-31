@@ -1681,7 +1681,8 @@ async def _procesar_lista_bins(bins: list[str]) -> list[str]:
             banco  = safe(info["bank"]) or "Desconocido"
             pais   = safe(info["country"]) or "?"
             codigo = f" `{info['country_code']}`" if info.get("country_code") else ""
-            marca  = f"  💠 {info['brand']} {info['type']}" if info.get("brand") else ""
+            partes = [p for p in [info.get("brand"), info.get("type"), info.get("level")] if p]
+            marca  = f"  💠 {' · '.join(partes)}" if partes else ""
             lineas = [f"💳 `{b}`  🏦 *{banco}*\n🌍 {pais}{codigo}{marca}"]
         else:
             lineas = [f"💳 `{b}`  ⚠️ _Sin info bancaria_"]
@@ -1742,7 +1743,8 @@ async def bin_buscar_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
                 f"🏦 Banco: *{safe(info['bank']) or 'Desconocido'}*",
                 f"🌍 País: {safe(info['country']) or 'Desconocido'}"
                 + (f" `{info['country_code']}`" if info.get("country_code") else ""),
-                f"💠 {safe(info['brand'])}  •  {safe(info['type'])}",
+                f"💠 {safe(info['brand'])}  •  {safe(info['type'])}"
+                + (f"  •  ⭐ {safe(info['level'])}" if info.get("level") else ""),
                 f"🔎 Consenso: _{conf_str}_",
             ]
         else:
@@ -1888,7 +1890,9 @@ async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: s
             f"\n🏦 {safe(info['bank']) or 'Banco desconocido'}"
             f" · 🌍 {safe(info['country']) or '?'}"
             + (f" ({info['country_code']})" if info.get("country_code") else "")
-            + (f"\n💠 {info['brand']}  •  {info['type']}" if info.get("brand") else "")
+            + (f"\n💠 {info['brand']}  •  {info['type']}"
+               + (f"  •  ⭐ {info['level']}" if info.get("level") else "")
+               if info.get("brand") else "")
         )
 
     async def reply(text, **kw):

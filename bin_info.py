@@ -53,8 +53,10 @@ def _parse_binlist(d: dict) -> dict | None:
     code    = _s(d.get("country", {}).get("alpha2"))
     brand   = _s(d.get("scheme", "")).upper()
     ctype   = _s(d.get("type", "")).capitalize()
+    # binlist no tiene nivel explícito; "prepaid" es lo más cercano
+    level   = "Prepaid" if d.get("prepaid") else ""
     return {"bank": bank, "country": country, "country_code": code,
-            "brand": brand, "type": ctype} if bank or country else None
+            "brand": brand, "type": ctype, "level": level} if bank or country else None
 
 
 def _parse_freebinchecker(d: dict) -> dict | None:
@@ -63,8 +65,9 @@ def _parse_freebinchecker(d: dict) -> dict | None:
     code    = _s(d.get("country", {}).get("alpha_2"))
     brand   = _s(d.get("card", {}).get("scheme", "")).upper()
     ctype   = _s(d.get("card", {}).get("type", "")).capitalize()
+    level   = _s(d.get("card", {}).get("category", "")).capitalize()
     return {"bank": bank, "country": country, "country_code": code,
-            "brand": brand, "type": ctype} if bank or country else None
+            "brand": brand, "type": ctype, "level": level} if bank or country else None
 
 
 def _parse_bintable(d: dict) -> dict | None:
@@ -74,8 +77,9 @@ def _parse_bintable(d: dict) -> dict | None:
     code    = _s((inner.get("country") or {}).get("code"))
     brand   = _s((inner.get("card") or {}).get("scheme", "")).upper()
     ctype   = _s((inner.get("card") or {}).get("type", "")).capitalize()
+    level   = _s((inner.get("card") or {}).get("category", "")).capitalize()
     return {"bank": bank, "country": country, "country_code": code,
-            "brand": brand, "type": ctype} if bank or country else None
+            "brand": brand, "type": ctype, "level": level} if bank or country else None
 
 
 def _parse_binsearch(d: dict) -> dict | None:
@@ -85,8 +89,9 @@ def _parse_binsearch(d: dict) -> dict | None:
     code    = _s(inner.get("isoCode2"))
     brand   = _s(inner.get("Brand", "")).upper()
     ctype   = _s(inner.get("Type", "")).capitalize()
+    level   = _s(inner.get("Category", "")).capitalize()
     return {"bank": bank, "country": country, "country_code": code,
-            "brand": brand, "type": ctype} if bank or country else None
+            "brand": brand, "type": ctype, "level": level} if bank or country else None
 
 
 def _parse_handyapi(d: dict) -> dict | None:
@@ -96,8 +101,9 @@ def _parse_handyapi(d: dict) -> dict | None:
     code    = _s(c_data.get("code") if isinstance(c_data, dict) else "")
     brand   = _s(d.get("scheme", "")).upper()
     ctype   = _s(d.get("type", "")).capitalize()
+    level   = _s(d.get("tier", "")).capitalize()
     return {"bank": bank, "country": country, "country_code": code,
-            "brand": brand, "type": ctype} if bank or country else None
+            "brand": brand, "type": ctype, "level": level} if bank or country else None
 
 
 def _parse_apiinjas(d) -> dict | None:
@@ -108,8 +114,10 @@ def _parse_apiinjas(d) -> dict | None:
     code    = _s(d.get("country_iso2"))
     brand   = _s(d.get("brand", "")).upper()
     ctype   = _s(d.get("type", "")).capitalize()
+    cats    = d.get("categories") or []
+    level   = _s(cats[0] if isinstance(cats, list) and cats else cats).capitalize()
     return {"bank": bank, "country": country, "country_code": code,
-            "brand": brand, "type": ctype} if bank or country else None
+            "brand": brand, "type": ctype, "level": level} if bank or country else None
 
 
 # ─── Fetch functions (bloqueantes, corren en threads) ─────────────────────────
@@ -161,18 +169,20 @@ def _fetch_apiinjas(b: str) -> dict | None:
 # ─── Consenso ─────────────────────────────────────────────────────────────────
 
 def _consenso(resultados: list[dict]) -> dict:
-    """Elige banco y país por mayoría de votos."""
+    """Elige banco, país y nivel por mayoría de votos."""
     banks    = Counter(r["bank"]         for r in resultados if r.get("bank"))
     countries= Counter(r["country"]      for r in resultados if r.get("country"))
     codes    = Counter(r["country_code"] for r in resultados if r.get("country_code"))
     brands   = Counter(r["brand"]        for r in resultados if r.get("brand"))
     types    = Counter(r["type"]         for r in resultados if r.get("type"))
+    levels   = Counter(r["level"]        for r in resultados if r.get("level"))
 
     bank,    bank_v  = banks.most_common(1)[0]    if banks    else ("", 0)
     country, _       = countries.most_common(1)[0] if countries else ("", 0)
     code             = codes.most_common(1)[0][0]  if codes    else ""
     brand            = brands.most_common(1)[0][0] if brands   else ""
     ctype            = types.most_common(1)[0][0]  if types    else ""
+    level            = levels.most_common(1)[0][0] if levels   else ""
 
     return {
         "bank":         bank,
@@ -180,8 +190,9 @@ def _consenso(resultados: list[dict]) -> dict:
         "country_code": code,
         "brand":        brand,
         "type":         ctype,
-        "fuentes":      len(resultados),   # cuántas APIs respondieron
-        "confianza":    bank_v,            # cuántas coincidieron en el banco
+        "level":        level,
+        "fuentes":      len(resultados),
+        "confianza":    bank_v,
     }
 
 
@@ -203,6 +214,7 @@ async def consultar_bin(bin_num: str) -> dict | None:
             "country_code": row["country_code"],
             "brand":        row["brand"],
             "type":         row["type"],
+            "level":        row["level"],
             "fuentes":      row["fuentes"],
             "confianza":    row["confianza"],
         }
@@ -230,7 +242,7 @@ async def consultar_bin(bin_num: str) -> dict | None:
         db.set_bin_cache,
         bin_num,
         info["bank"], info["country"], info["country_code"],
-        info["brand"], info["type"],
+        info["brand"], info["type"], info["level"],
         info["fuentes"], info["confianza"],
     )
 

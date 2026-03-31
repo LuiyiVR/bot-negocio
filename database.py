@@ -82,6 +82,7 @@ def init_db():
                 type TEXT NOT NULL DEFAULT '',
                 fuentes INTEGER NOT NULL DEFAULT 0,
                 confianza INTEGER NOT NULL DEFAULT 0,
+                level TEXT NOT NULL DEFAULT '',
                 fecha TEXT NOT NULL
             );
 
@@ -98,6 +99,11 @@ def init_db():
                 fecha TEXT NOT NULL
             );
         """)
+        # Migración: agregar columna level si la BD fue creada antes de esta versión
+        try:
+            conn.execute("ALTER TABLE bin_cache ADD COLUMN level TEXT NOT NULL DEFAULT ''")
+        except Exception:
+            pass  # La columna ya existe
 
 
 # ─────────────────────────── VENTAS ──────────────────────────────────────────
@@ -420,15 +426,15 @@ def get_bin_cache(bin_num: str):
 
 
 def set_bin_cache(bin_num: str, bank: str, country: str, country_code: str,
-                  brand: str, card_type: str, fuentes: int, confianza: int):
+                  brand: str, card_type: str, level: str, fuentes: int, confianza: int):
     """Guarda (o actualiza) la info bancaria de un BIN en la BD."""
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO bin_cache
-            (bin, bank, country, country_code, brand, type, fuentes, confianza, fecha)
-            VALUES (?,?,?,?,?,?,?,?,?)
-        """, (bin_num, bank, country, country_code, brand, card_type, fuentes, confianza, fecha))
+            (bin, bank, country, country_code, brand, type, level, fuentes, confianza, fecha)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, (bin_num, bank, country, country_code, brand, card_type, level, fuentes, confianza, fecha))
 
 
 def buscar_bin(bin_num: str) -> list:
