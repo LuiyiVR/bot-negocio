@@ -119,6 +119,25 @@ def todas_las_ventas():
         return conn.execute("SELECT * FROM ventas ORDER BY fecha DESC").fetchall()
 
 
+def ventas_hoy():
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM ventas WHERE fecha LIKE ? ORDER BY fecha DESC",
+            (f"{hoy}%",)
+        ).fetchall()
+
+
+def ventas_semana():
+    from datetime import timedelta
+    hace7 = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT * FROM ventas WHERE fecha >= ? ORDER BY fecha DESC",
+            (hace7,)
+        ).fetchall()
+
+
 # ─────────────────────────── PEDIDOS ─────────────────────────────────────────
 
 def crear_pedido(creado_por, tipo, link, descripcion,

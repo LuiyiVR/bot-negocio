@@ -5,6 +5,7 @@ Bot de Telegram — Negocio Airbnb / Vuelos / Tours
 • Acceso restringido a 3 IDs (ALLOWED_IDS en .env)
 """
 
+import io
 import os
 import logging
 from datetime import datetime
@@ -42,6 +43,12 @@ def safe(text: str) -> str:
         text = text.replace(ch, f"\\{ch}")
     return text
 
+
+def fmt_gan(monto: float) -> str:
+    """Formatea ganancia: siempre positivo, emoji indica dirección."""
+    ico = "📈" if monto >= 0 else "📉"
+    return f"{ico} {formato_mxn(abs(monto))}"
+
 # ── Estados ───────────────────────────────────────────────────────────────────
 (
     ST_MENU,
@@ -64,7 +71,9 @@ def safe(text: str) -> str:
     # Inversión — editar monto inicial
     ST_INV_EDITAR_MONTO,
     ST_INV_AGREGAR_MONTO,
-) = range(20)
+    # Reportes descargables — otro mes
+    ST_REP_OTRO_MES,
+) = range(21)
 
 TIPOS_PEDIDO = ["✈️ Vuelo", "🏠 Airbnb", "🗺️ Tour", "🎡 Otro"]
 
@@ -101,6 +110,9 @@ def kb_menu():
         [
             InlineKeyboardButton("📅  Resumen del Mes",    callback_data="resumen_actual"),
             InlineKeyboardButton("🗓  Otro Mes",           callback_data="resumen_otro"),
+        ],
+        [
+            InlineKeyboardButton("📥  Descargar Reporte",  callback_data="reporte_menu"),
         ],
         [
             InlineKeyboardButton("🏦  Ver Inversión",      callback_data="ver_inversion"),
@@ -363,7 +375,6 @@ async def ped_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
                 logger.warning(f"No se pudo notificar a {uid}: {e}")
 
     txt_tc = f"\n_TC: ${tc_final:.2f} MXN/USD_" if tc_final != 1.0 else ""
-    emoji_gan = "📈" if ganancia_est >= 0 else "📉"
 
     await update.message.reply_text(
         f"✅ *¡Pedido #{pedido_id} creado!*\n"
@@ -371,7 +382,7 @@ async def ped_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         f"{ped_tipo} — {safe(ped_desc)}\n"
         f"💸 Total de compra: {formato_mxn(c_mxn)}\n"
         f"💰 Cobrado al cliente: {formato_mxn(p_mxn)}\n"
-        f"{emoji_gan} Ganancia estimada: *{formato_mxn(ganancia_est)}*\n"
+        f"Ganancia estimada: *{fmt_gan(ganancia_est)}*\n"
         f"{txt_tc}\n\n"
         f"📲 _Se notificó a los demás socios._",
         parse_mode="Markdown",
@@ -406,9 +417,9 @@ async def ped_ver_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         gan = p["monto_cobrado_mxn"] - p["monto_compra_mxn"]
         lineas.append(
             f"*#{p['id']}* {p['tipo']} — {safe(p['descripcion'])}\n"
-            f"   💸 Total de compra: {formato_mxn(p["monto_compra_mxn"])}  "
+            f"   💸 Total de compra: {formato_mxn(p['monto_compra_mxn'])}  "
             f"💰 Cobrado: {formato_mxn(p['monto_cobrado_mxn'])}  "
-            f"📈 *{formato_mxn(gan)}*\n"
+            f"*{fmt_gan(gan)}*\n"
             f"   👤 {safe(p['creado_por'])}  🗓 {p['fecha_creacion'][:10]}"
         )
         filas_btn.append([
@@ -470,7 +481,7 @@ async def ped_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         lineas.append(
             f"{estado_ico} *#{p['id']}* {p['tipo']} — {safe(p['descripcion'])}\n"
             f"   💳 {tarjeta_txt}  |  {fecha_txt}\n"
-            f"   💸 {formato_mxn(p['monto_compra_mxn'])}  💰 {formato_mxn(p['monto_cobrado_mxn'])}  📈 *{formato_mxn(gan)}*"
+            f"   💸 {formato_mxn(p['monto_compra_mxn'])}  💰 {formato_mxn(p['monto_cobrado_mxn'])}  *{fmt_gan(gan)}*"
         )
 
         # Botones según estado — sin duplicados
@@ -539,7 +550,7 @@ async def aceptar_ped_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         f"{pedido['tipo']} — {safe(pedido['descripcion'])}{safe(link_txt)}\n\n"
         f"💸 Total de compra: {formato_mxn(pedido['monto_compra_mxn'])}\n"
         f"💰 Cobrado al cliente: {formato_mxn(pedido['monto_cobrado_mxn'])}\n"
-        f"📈 Ganancia estimada: *{formato_mxn(gan)}*\n"
+        f"Ganancia estimada: *{fmt_gan(gan)}*\n"
         f"👤 Creado por: {safe(pedido['creado_por'])}\n"
         f"{SEP}\n"
         f"¿Confirmas que *tú* vas a trabajar este pedido?",
@@ -590,7 +601,7 @@ async def aceptar_ped_confirmar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
         f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
         f"💸 Total de compra: {formato_mxn(pedido['monto_compra_mxn'])}\n"
         f"💰 Cobras: {formato_mxn(pedido['monto_cobrado_mxn'])}\n"
-        f"📈 Ganancia: *{formato_mxn(gan)}*\n"
+        f"Ganancia: *{fmt_gan(gan)}*\n"
         f"{SEP}\n"
         f"_Tómate el tiempo que necesites para realizar la compra._\n"
         f"_Cuando lo hayas completado, ve a_ *📦 Pedidos → ✅ Mis Pedidos*\n"
@@ -626,7 +637,7 @@ async def completar_ped_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         f"{pedido['tipo']} — {safe(pedido['descripcion'])}{safe(link_txt)}\n"
         f"💸 Total de compra: {formato_mxn(pedido['monto_compra_mxn'])}\n"
         f"💰 Cobrado: {formato_mxn(pedido['monto_cobrado_mxn'])}\n"
-        f"📈 Ganancia: *{formato_mxn(gan)}*\n"
+        f"Ganancia: *{fmt_gan(gan)}*\n"
         f"{SEP}\n"
         f"Escribe los *16 dígitos* de la tarjeta con la que hiciste la compra:",
         parse_mode="Markdown",
@@ -672,7 +683,7 @@ async def completar_ped_tarjeta(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
                         f"*{nombre}* cerró el pedido:\n"
                         f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
                         f"💳 Tarjeta: `****{tarjeta[-4:]}`\n"
-                        f"📈 Ganancia registrada: *{formato_mxn(gan)}*"
+                        f"Ganancia registrada: *{fmt_gan(gan)}*"
                     ),
                     parse_mode="Markdown",
                 )
@@ -687,7 +698,7 @@ async def completar_ped_tarjeta(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
         f"{pedido['tipo']} — {safe(pedido['descripcion'])}\n"
         f"💸 Total de compra: {formato_mxn(pedido['monto_compra_mxn'])}\n"
         f"💰 Cobrado: {formato_mxn(pedido['monto_cobrado_mxn'])}\n"
-        f"📈 *Ganancia: {formato_mxn(gan)}*{txt_tc}\n\n"
+        f"*Ganancia: {fmt_gan(gan)}*{txt_tc}\n\n"
         f"_Venta registrada automáticamente._",
         parse_mode="Markdown",
         reply_markup=kb_volver_pedidos(),
@@ -703,7 +714,7 @@ def _texto_pedido_notif(p) -> str:
         f"*#{p['id']}* {p['tipo']} — {safe(p['descripcion'])}{link_txt}\n"
         f"💸 Total de compra: {formato_mxn(p["monto_compra_mxn"])}\n"
         f"💰 Cobrado al cliente: {formato_mxn(p['monto_cobrado_mxn'])}\n"
-        f"📈 Ganancia: *{formato_mxn(gan)}*\n"
+        f"Ganancia: *{fmt_gan(gan)}*\n"
         f"👤 Creado por: {safe(p['creado_por'])}"
     )
 
@@ -818,7 +829,7 @@ async def nv_gastado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         f"👤 {ud['vt_usuario']}  💳 `****{ud['vt_tarjeta'][-4:]}`\n"
         f"📦 {safe(ud['vt_desc'])}\n"
         f"💰 Cobrado: {formato_mxn(c_mxn)}  💸 Gastado: {formato_mxn(g_mxn)}\n"
-        f"📈 *Ganancia: {formato_mxn(ganancia)}*{txt_tc}",
+        f"*Ganancia: {fmt_gan(ganancia)}*{txt_tc}",
         parse_mode="Markdown", reply_markup=kb_volver(),
     )
     ctx.user_data.clear()
@@ -865,13 +876,13 @@ async def mv_mostrar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         lineas.append(
             f"*#{v['id']}*  🗓 `{v['fecha'][:10]}`  💳 `****{v['tarjeta'][-4:]}`\n"
             f"   {safe(v['descripcion'])}\n"
-            f"   💰 {formato_mxn(v['monto_cobrado_mxn'])}  💸 {formato_mxn(v['monto_gastado_mxn'])}  📈 *{formato_mxn(gan)}*"
+            f"   💰 {formato_mxn(v['monto_cobrado_mxn'])}  💸 {formato_mxn(v['monto_gastado_mxn'])}  *{fmt_gan(gan)}*"
         )
         filas_btn.append([InlineKeyboardButton(
             f"🗑  Eliminar #{v['id']} — {v['descripcion'][:25]}",
             callback_data=f"del_venta:{v['id']}"
         )])
-    lineas.append(f"\n{SEP}\n📈 *Ganancia total: {formato_mxn(total_c - total_g)}*")
+    lineas.append(f"\n{SEP}\n*Ganancia total: {fmt_gan(total_c - total_g)}*")
     filas_btn.append([InlineKeyboardButton("🏠 Menú Principal", callback_data="menu")])
 
     await q.edit_message_text(
@@ -909,12 +920,12 @@ async def todas_ventas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         tg = sum(v["monto_gastado_mxn"] for v in svs)
         lineas.append(
             f"👤 *{socio}* — {len(svs)} venta(s)\n"
-            f"   💰 {formato_mxn(tc)}  💸 {formato_mxn(tg)}  📈 *{formato_mxn(tc - tg)}*"
+            f"   💰 {formato_mxn(tc)}  💸 {formato_mxn(tg)}  *{fmt_gan(tc - tg)}*"
         )
     lineas.append(
         f"\n{SEP}\n🏦 *TOTAL*\n"
         f"💰 {formato_mxn(gran_c)}  💸 {formato_mxn(gran_g)}\n"
-        f"📈 *{formato_mxn(gran_c - gran_g)}*"
+        f"*{fmt_gan(gran_c - gran_g)}*"
     )
     await q.edit_message_text(
         "\n".join(lineas), parse_mode="Markdown", reply_markup=kb_volver(),
@@ -997,13 +1008,13 @@ def _calcular_resumen(anio: int, mes: int) -> str:
         svs = por_socio.get(s, [])
         c = sum(v["monto_cobrado_mxn"] for v in svs)
         g = sum(v["monto_gastado_mxn"] for v in svs)
-        lineas.append(f"👤 *{s}* — {len(svs)} venta(s) | 📈 {formato_mxn(c - g)}")
+        lineas.append(f"👤 *{s}* — {len(svs)} venta(s) | {fmt_gan(c - g)}")
 
     lineas += [
         f"\n{SEP}",
         f"💰 Total cobrado: {formato_mxn(total_c)}",
         f"💸 Total gastado: {formato_mxn(total_g)}",
-        f"📈 *Ganancia del mes: {formato_mxn(ganancia)}*",
+        f"*Ganancia del mes: {fmt_gan(ganancia)}*",
         f"\n{SEP}",
         f"🏦 Inversión inicial: {formato_mxn(inv_ini)}",
         f"💼 Gastos acumulados: {formato_mxn(total_inv)}",
@@ -1014,6 +1025,164 @@ def _calcular_resumen(anio: int, mes: int) -> str:
     for s in socios:
         lineas.append(f"   👤 {s} → *{formato_mxn(por_socio_gan)}*")
     return "\n".join(lineas)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  REPORTES DESCARGABLES
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _csv_bytes(ventas, titulo: str) -> bytes:
+    """Genera un CSV en memoria con las ventas dadas."""
+    buf = io.StringIO()
+    buf.write(f"# {titulo}\n")
+    buf.write("ID,Fecha,Socio,Tarjeta,Descripcion,Cobrado MXN,Gastado MXN,Ganancia MXN\n")
+    for v in ventas:
+        gan = v["monto_cobrado_mxn"] - v["monto_gastado_mxn"]
+        desc = v["descripcion"].replace('"', "'")
+        buf.write(
+            f"{v['id']},{v['fecha'][:10]},{v['usuario']},****{v['tarjeta'][-4:]},"
+            f"\"{desc}\",{v['monto_cobrado_mxn']:.2f},{v['monto_gastado_mxn']:.2f},{gan:.2f}\n"
+        )
+    total_c = sum(v["monto_cobrado_mxn"] for v in ventas)
+    total_g = sum(v["monto_gastado_mxn"] for v in ventas)
+    buf.write(f"\nTOTAL,,,,,{total_c:.2f},{total_g:.2f},{total_c - total_g:.2f}\n")
+    return buf.getvalue().encode("utf-8")
+
+
+async def reporte_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📅 Hoy",         callback_data="rep_hoy"),
+            InlineKeyboardButton("📆 Esta Semana", callback_data="rep_semana"),
+        ],
+        [
+            InlineKeyboardButton("🗓 Este Mes",    callback_data="rep_mes_actual"),
+            InlineKeyboardButton("📁 Otro Mes",    callback_data="rep_otro_mes"),
+        ],
+        [InlineKeyboardButton("🏠 Menú Principal", callback_data="menu")],
+    ])
+    await q.edit_message_text(
+        "📥 *Descargar Reporte*\n\n¿Qué periodo quieres descargar?",
+        parse_mode="Markdown", reply_markup=kb,
+    )
+    return ST_MENU
+
+
+async def rep_hoy(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer("Generando reporte...")
+    ventas = db.ventas_hoy()
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    titulo = f"Reporte Diario — {hoy}"
+    if not ventas:
+        await q.edit_message_text(f"📭 No hay ventas hoy ({hoy}).", reply_markup=kb_volver())
+        return ST_MENU
+    csv_data = _csv_bytes(ventas, titulo)
+    await update.get_bot().send_document(
+        chat_id=q.message.chat_id,
+        document=io.BytesIO(csv_data),
+        filename=f"reporte_diario_{hoy}.csv",
+        caption=f"📅 *{titulo}* — {len(ventas)} venta(s)",
+        parse_mode="Markdown",
+    )
+    return ST_MENU
+
+
+async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer("Generando reporte...")
+    ventas = db.ventas_semana()
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    titulo = f"Reporte Semanal — hasta {hoy}"
+    if not ventas:
+        await q.edit_message_text("📭 No hay ventas en los últimos 7 días.", reply_markup=kb_volver())
+        return ST_MENU
+    csv_data = _csv_bytes(ventas, titulo)
+    await update.get_bot().send_document(
+        chat_id=q.message.chat_id,
+        document=io.BytesIO(csv_data),
+        filename=f"reporte_semanal_{hoy}.csv",
+        caption=f"📆 *{titulo}* — {len(ventas)} venta(s)",
+        parse_mode="Markdown",
+    )
+    return ST_MENU
+
+
+async def rep_mes_actual(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer("Generando reporte...")
+    now = datetime.now()
+    ventas = db.ventas_mes(now.year, now.month)
+    nombre_mes = now.strftime("%m-%Y")
+    titulo = f"Reporte Mensual — {nombre_mes}"
+    if not ventas:
+        await q.edit_message_text(f"📭 No hay ventas este mes ({nombre_mes}).", reply_markup=kb_volver())
+        return ST_MENU
+    csv_data = _csv_bytes(ventas, titulo)
+    await update.get_bot().send_document(
+        chat_id=q.message.chat_id,
+        document=io.BytesIO(csv_data),
+        filename=f"reporte_mensual_{nombre_mes}.csv",
+        caption=f"🗓 *{titulo}* — {len(ventas)} venta(s)",
+        parse_mode="Markdown",
+    )
+    return ST_MENU
+
+
+async def rep_otro_mes_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+    q = update.callback_query
+    await q.answer()
+    await q.edit_message_text(
+        "📁 *Reporte de otro mes*\n\nEscribe el mes en formato *MM/AAAA*\n_Ej: `03/2026`_",
+        parse_mode="Markdown", reply_markup=kb_cancelar(),
+    )
+    return ST_REP_OTRO_MES
+
+
+async def rep_otro_mes_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    try:
+        partes = update.message.text.strip().split("/")
+        mes, anio = int(partes[0]), int(partes[1])
+    except Exception:
+        await update.message.reply_text(
+            "❌ Formato incorrecto. Usa *MM/AAAA*\n_Ej: `03/2026`_",
+            parse_mode="Markdown", reply_markup=kb_cancelar(),
+        )
+        return ST_REP_OTRO_MES
+
+    ventas = db.ventas_mes(anio, mes)
+    nombre_mes = f"{mes:02d}-{anio}"
+    titulo = f"Reporte Mensual — {nombre_mes}"
+    if not ventas:
+        await update.message.reply_text(
+            f"📭 No hay ventas en *{nombre_mes}*.", parse_mode="Markdown", reply_markup=kb_volver()
+        )
+        return ST_MENU
+    csv_data = _csv_bytes(ventas, titulo)
+    await update.message.reply_document(
+        document=io.BytesIO(csv_data),
+        filename=f"reporte_{nombre_mes}.csv",
+        caption=f"📁 *{titulo}* — {len(ventas)} venta(s)",
+        parse_mode="Markdown",
+    )
+    return ST_MENU
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1464,6 +1633,11 @@ def main():
                 CallbackQueryHandler(todas_ventas,         pattern="^todas_ventas$"),
                 CallbackQueryHandler(resumen_actual,       pattern="^resumen_actual$"),
                 CallbackQueryHandler(resumen_otro_inicio,  pattern="^resumen_otro$"),
+                CallbackQueryHandler(reporte_menu,         pattern="^reporte_menu$"),
+                CallbackQueryHandler(rep_hoy,              pattern="^rep_hoy$"),
+                CallbackQueryHandler(rep_semana,           pattern="^rep_semana$"),
+                CallbackQueryHandler(rep_mes_actual,       pattern="^rep_mes_actual$"),
+                CallbackQueryHandler(rep_otro_mes_inicio,  pattern="^rep_otro_mes$"),
                 CallbackQueryHandler(ver_inversion,        pattern="^ver_inversion$"),
                 CallbackQueryHandler(gasto_inv_inicio,     pattern="^gasto_inversion$"),
                 CallbackQueryHandler(inv_editar_inicio,    pattern="^inv_editar$"),
@@ -1539,6 +1713,11 @@ def main():
             # ── Resumen ───────────────────────────────────────────────────────
             ST_RES_MES: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, resumen_mes_texto),
+                CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
+            ],
+            # ── Reportes descargables — otro mes ──────────────────────────────
+            ST_REP_OTRO_MES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, rep_otro_mes_texto),
                 CallbackQueryHandler(mostrar_menu,     pattern="^menu$"),
             ],
             # ── Inversión ─────────────────────────────────────────────────────
