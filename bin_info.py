@@ -15,11 +15,14 @@ APIs opcionales (activar con keys en .env):
 """
 import asyncio
 import json
+import logging
 import os
 import urllib.request
 from collections import Counter
 
 import database as db
+
+logger = logging.getLogger(__name__)
 
 # ─── API keys opcionales ──────────────────────────────────────────────────────
 _BINTABLE_KEY   = os.getenv("BINTABLE_API_KEY", "")
@@ -37,7 +40,8 @@ def _get(url: str, headers: dict | None = None) -> dict | None:
         req = urllib.request.Request(url, headers=headers or {})
         with urllib.request.urlopen(req, timeout=6) as r:
             return json.loads(r.read())
-    except Exception:
+    except Exception as e:
+        logger.debug("BIN API request failed for %s: %s", url.split("?")[0], e)
         return None
 
 

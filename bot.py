@@ -7,6 +7,7 @@ Bot de Telegram — Negocio Airbnb / Vuelos / Tours
 
 import io
 import os
+import re
 import asyncio
 import logging
 from datetime import datetime
@@ -41,9 +42,19 @@ SEP = "─" * 28
 
 def safe(text: str) -> str:
     """Escapa caracteres especiales de Markdown v1 en texto de usuario."""
-    for ch in ("_", "*", "[", "`"):
+    for ch in ("_", "*", "[", "]", "(", ")", "`"):
         text = text.replace(ch, f"\\{ch}")
     return text
+
+
+def nombre_usuario(tg_user) -> str:
+    """Devuelve el nombre display del usuario de Telegram."""
+    return tg_user.first_name or tg_user.username or str(tg_user.id)
+
+
+async def _db(func, *args, **kwargs):
+    """Ejecuta una función de base de datos en un thread para no bloquear el event loop."""
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 def fmt_gan(monto: float) -> str:
@@ -257,7 +268,7 @@ async def pedidos_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     q = update.callback_query
     await q.answer()
-    pendientes = len(db.pedidos_pendientes())
+    pendientes = len(await _db(db.pedidos_pendientes))
     badge = f" ({pendientes} pendiente{'s' if pendientes != 1 else ''})" if pendientes else ""
 
     await q.edit_message_text(
@@ -323,7 +334,14 @@ async def ped_link_saltar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
 
 
 async def ped_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    ctx.user_data["ped_link"] = update.message.text.strip()
+    link = update.message.text.strip()
+    if len(link) > 500:
+        await _reply(update, ctx,
+            "❌ Link demasiado largo (máx. 500 caracteres). Intenta de nuevo:",
+            reply_markup=kb_cancelar(),
+        )
+        return ST_PED_LINK
+    ctx.user_data["ped_link"] = link
     ud = ctx.user_data
     await _reply(update, ctx,
         f"📝 *Nuevo Pedido — {ud['ped_tipo']}*\n\n"
@@ -338,7 +356,14 @@ async def ped_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def ped_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    ctx.user_data["ped_desc"] = update.message.text.strip()
+    desc = update.message.text.strip()
+    if len(desc) > 200:
+        await _reply(update, ctx,
+            "❌ Descripción demasiado larga (máx. 200 caracteres). Intenta de nuevo:",
+            reply_markup=kb_cancelar(),
+        )
+        return ST_PED_PEDESC
+    ctx.user_data["ped_desc"] = desc
     ud = ctx.user_data
     await _reply(update, ctx,
         f"📝 *Nuevo Pedido — {ud['ped_tipo']}*\n\n"
@@ -401,10 +426,10 @@ async def ped_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     ganancia_est = p_mxn - c_mxn
 
     tg_user = update.effective_user
-    nombre_usuario = tg_user.first_name or tg_user.username or str(tg_user.id)
+    nomb = nombre_usuario(tg_user)
 
-    pedido_id = db.crear_pedido(
-        creado_por=nombre_usuario,
+    pedido = await _db(db.crear_pedido,
+        creado_por=nomb,
         tipo=ped_tipo,
         link=ped_link,
         descripcion=ped_desc,
@@ -412,10 +437,11 @@ async def ped_cobrado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         monto_cobrado=p_monto, moneda_cobrado=p_moneda, monto_cobrado_mxn=p_mxn,
         tipo_cambio=tc_final,
     )
+    pedido_id = pedido["id"]
     ctx.user_data.clear()  # seguro limpiar aquí, ya no usamos user_data
 
     # ── Notificar a los demás usuarios ────────────────────────────────────────
-    txt_notif = _texto_pedido_notif(db.get_pedido(pedido_id))
+    txt_notif = _texto_pedido_notif(pedido)
     kb_notif = InlineKeyboardMarkup([[
         InlineKeyboardButton(f"✅  Aceptar pedido #{pedido_id}", callback_data=f"aceptar_ped:{pedido_id}")
     ]])
@@ -453,7 +479,7 @@ async def ped_ver_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
     q = update.callback_query
     await q.answer()
-    pedidos = db.pedidos_pendientes()
+    pedidos = await _db(db.pedidos_pendientes)
 
     if not pedidos:
         await q.edit_message_text(
@@ -504,8 +530,8 @@ async def ped_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await q.answer()
 
     tg_user = update.effective_user
-    nombre = tg_user.first_name or tg_user.username or str(tg_user.id)
-    pedidos = db.pedidos_de_usuario(nombre)
+    nombre = nombre_usuario(tg_user)
+    pedidos = await _db(db.pedidos_de_usuario, nombre)
 
     if not pedidos:
         await q.edit_message_text(
@@ -570,7 +596,7 @@ async def aceptar_ped_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     q = update.callback_query
     await q.answer()
     pedido_id = int(q.data.split(":")[1])
-    pedido = db.get_pedido(pedido_id)
+    pedido = await _db(db.get_pedido, pedido_id)
 
     if not pedido:
         await q.edit_message_text("❌ Pedido no encontrado.", reply_markup=kb_volver())
@@ -612,13 +638,16 @@ async def aceptar_ped_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def aceptar_ped_confirmar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
     q = update.callback_query
     await q.answer()
     pedido_id = int(q.data.split(":")[1])
     tg_user = update.effective_user
-    nombre = tg_user.first_name or tg_user.username or str(tg_user.id)
+    nombre = nombre_usuario(tg_user)
 
-    pedido = db.aceptar_pedido(pedido_id, nombre)
+    pedido = await _db(db.aceptar_pedido, pedido_id, nombre)
     if not pedido:
         await q.edit_message_text(
             "⚠️ Otro socio acaba de tomar este pedido. Ya no está disponible.",
@@ -669,7 +698,10 @@ async def completar_ped_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     q = update.callback_query
     await q.answer()
     pedido_id = int(q.data.split(":")[1])
-    pedido = db.get_pedido(pedido_id)
+    pedido = await _db(db.get_pedido, pedido_id)
+    if not pedido:
+        await q.edit_message_text("⚠️ Pedido no encontrado.", reply_markup=kb_volver_pedidos())
+        return ST_MENU
     gan = pedido["monto_cobrado_mxn"] - pedido["monto_compra_mxn"]
     link_txt = f"\n🔗 {pedido['link']}" if pedido["link"] else ""
 
@@ -703,9 +735,9 @@ async def completar_ped_tarjeta(update: Update, ctx: ContextTypes.DEFAULT_TYPE) 
 
     pedido_id = ctx.user_data["comp_pedido_id"]
     tg_user = update.effective_user
-    nombre = tg_user.first_name or tg_user.username or str(tg_user.id)
+    nombre = nombre_usuario(tg_user)
 
-    pedido = db.completar_pedido(pedido_id, nombre, tarjeta)
+    pedido = await _db(db.completar_pedido, pedido_id, nombre, tarjeta[-4:])
     if not pedido:
         await _reply(update, ctx,
             "⚠️ No se pudo completar. Verifica que este pedido aún te pertenece.",
@@ -797,7 +829,7 @@ async def nv_tarjeta(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             parse_mode="Markdown", reply_markup=kb_cancelar(),
         )
         return ST_VT_TARJETA
-    ctx.user_data["vt_tarjeta"] = tarjeta
+    ctx.user_data["vt_tarjeta"] = tarjeta[-4:]
     await _reply(update, ctx,
         f"🛒 *Nueva Venta*\n\n✅ Socio: *{ctx.user_data['vt_usuario']}*\n"
         f"✅ Tarjeta: `****{tarjeta[-4:]}`\n\n"
@@ -809,7 +841,14 @@ async def nv_tarjeta(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def nv_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    ctx.user_data["vt_desc"] = update.message.text.strip()
+    desc = update.message.text.strip()
+    if len(desc) > 200:
+        await _reply(update, ctx,
+            "❌ Descripción demasiado larga (máx. 200 caracteres). Intenta de nuevo:",
+            reply_markup=kb_cancelar(),
+        )
+        return ST_VT_DESC
+    ctx.user_data["vt_desc"] = desc
     ud = ctx.user_data
     await _reply(update, ctx,
         f"🛒 *Nueva Venta*\n\n✅ Socio: *{ud['vt_usuario']}*\n"
@@ -853,7 +892,7 @@ async def nv_gastado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     g_monto, g_moneda, g_mxn, g_tc = ud["vt_gastado"]
     tc_final = c_tc if c_moneda == "USD" else g_tc
 
-    db.registrar_venta(
+    await _db(db.registrar_venta,
         usuario=ud["vt_usuario"], tarjeta=ud["vt_tarjeta"],
         descripcion=ud["vt_desc"],
         monto_cobrado=c_monto, moneda_cobrado=c_moneda, monto_cobrado_mxn=c_mxn,
@@ -897,7 +936,7 @@ async def mv_mostrar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
     usuario = q.data.split(":", 1)[1]
-    ventas = db.ventas_por_usuario(usuario)
+    ventas = await _db(db.ventas_por_usuario, usuario)
 
     if not ventas:
         await q.edit_message_text(
@@ -941,7 +980,7 @@ async def todas_ventas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     q = update.callback_query
     await q.answer()
-    ventas = db.todas_las_ventas()
+    ventas = await _db(db.todas_las_ventas)
 
     if not ventas:
         await q.edit_message_text("📭 No hay ventas aún.", reply_markup=kb_volver())
@@ -984,7 +1023,7 @@ async def resumen_actual(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     await q.answer()
     hoy = datetime.now()
     await q.edit_message_text(
-        _calcular_resumen(hoy.year, hoy.month),
+        await _calcular_resumen(hoy.year, hoy.month),
         parse_mode="Markdown", reply_markup=kb_volver(),
     )
     return ST_MENU
@@ -1018,17 +1057,17 @@ async def resumen_mes_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         return ST_RES_MES
 
     await _reply(update, ctx,
-        _calcular_resumen(anio, mes),
+        await _calcular_resumen(anio, mes),
         parse_mode="Markdown", reply_markup=kb_volver(),
     )
     return ST_MENU
 
 
-def _calcular_resumen(anio: int, mes: int) -> str:
-    ventas = db.ventas_mes(anio, mes)
-    inv_ini = float(db.get_config("inversion_inicial") or 15000)
-    socios = db.get_socios()
-    total_inv = db.total_gastado_inversion()
+async def _calcular_resumen(anio: int, mes: int) -> str:
+    ventas = await _db(db.ventas_mes, anio, mes)
+    inv_ini = float(await _db(db.get_config, "inversion_inicial") or 15000)
+    socios = await _db(db.get_socios)
+    total_inv = await _db(db.total_gastado_inversion)
     nombre_mes = f"{mes:02d}/{anio}"
 
     if not ventas:
@@ -1073,20 +1112,20 @@ def _calcular_resumen(anio: int, mes: int) -> str:
 
 def _csv_bytes(ventas, titulo: str) -> bytes:
     """Genera un CSV en memoria con las ventas dadas."""
-    buf = io.StringIO()
-    buf.write(f"# {titulo}\n")
-    buf.write("ID,Fecha,Socio,Tarjeta,Descripcion,Cobrado MXN,Gastado MXN,Ganancia MXN\n")
-    for v in ventas:
-        gan = v["monto_cobrado_mxn"] - v["monto_gastado_mxn"]
-        desc = v["descripcion"].replace('"', "'")
-        buf.write(
-            f"{v['id']},{v['fecha'][:10]},{v['usuario']},****{v['tarjeta'][-4:]},"
-            f"\"{desc}\",{v['monto_cobrado_mxn']:.2f},{v['monto_gastado_mxn']:.2f},{gan:.2f}\n"
-        )
-    total_c = sum(v["monto_cobrado_mxn"] for v in ventas)
-    total_g = sum(v["monto_gastado_mxn"] for v in ventas)
-    buf.write(f"\nTOTAL,,,,,{total_c:.2f},{total_g:.2f},{total_c - total_g:.2f}\n")
-    return buf.getvalue().encode("utf-8")
+    with io.StringIO() as buf:
+        buf.write(f"# {titulo}\n")
+        buf.write("ID,Fecha,Socio,Tarjeta,Descripcion,Cobrado MXN,Gastado MXN,Ganancia MXN\n")
+        for v in ventas:
+            gan = v["monto_cobrado_mxn"] - v["monto_gastado_mxn"]
+            desc = v["descripcion"].replace('"', "'")
+            buf.write(
+                f"{v['id']},{v['fecha'][:10]},{v['usuario']},****{v['tarjeta'][-4:]},"
+                f"\"{desc}\",{v['monto_cobrado_mxn']:.2f},{v['monto_gastado_mxn']:.2f},{gan:.2f}\n"
+            )
+        total_c = sum(v["monto_cobrado_mxn"] for v in ventas)
+        total_g = sum(v["monto_gastado_mxn"] for v in ventas)
+        buf.write(f"\nTOTAL,,,,,{total_c:.2f},{total_g:.2f},{total_c - total_g:.2f}\n")
+        return buf.getvalue().encode("utf-8")
 
 
 async def reporte_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1119,7 +1158,7 @@ async def rep_hoy(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     q = update.callback_query
     await q.answer("Generando reporte...")
-    ventas = db.ventas_hoy()
+    ventas = await _db(db.ventas_hoy)
     hoy = datetime.now().strftime("%Y-%m-%d")
     titulo = f"Reporte Diario — {hoy}"
     if not ventas:
@@ -1142,7 +1181,7 @@ async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     q = update.callback_query
     await q.answer("Generando reporte...")
-    ventas = db.ventas_semana()
+    ventas = await _db(db.ventas_semana)
     hoy = datetime.now().strftime("%Y-%m-%d")
     titulo = f"Reporte Semanal — hasta {hoy}"
     if not ventas:
@@ -1166,7 +1205,7 @@ async def rep_mes_actual(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer("Generando reporte...")
     now = datetime.now()
-    ventas = db.ventas_mes(now.year, now.month)
+    ventas = await _db(db.ventas_mes, now.year, now.month)
     nombre_mes = now.strftime("%m-%Y")
     titulo = f"Reporte Mensual — {nombre_mes}"
     if not ventas:
@@ -1208,7 +1247,7 @@ async def rep_otro_mes_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         )
         return ST_REP_OTRO_MES
 
-    ventas = db.ventas_mes(anio, mes)
+    ventas = await _db(db.ventas_mes, anio, mes)
     nombre_mes = f"{mes:02d}-{anio}"
     titulo = f"Reporte Mensual — {nombre_mes}"
     if not ventas:
@@ -1221,7 +1260,7 @@ async def rep_otro_mes_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     except Exception:
         pass
     csv_data = _csv_bytes(ventas, titulo)
-    await update.message.reply_document(
+    await update.effective_chat.send_document(
         document=io.BytesIO(csv_data),
         filename=f"reporte_{nombre_mes}.csv",
         caption=f"📁 *{titulo}* — {len(ventas)} venta(s)",
@@ -1244,9 +1283,9 @@ async def ver_inversion(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def _render_inversion(q) -> int:
-    inv_ini = float(db.get_config("inversion_inicial") or 15000)
-    gastos  = db.gastos_inversion()
-    total_g = db.total_gastado_inversion()
+    inv_ini = float(await _db(db.get_config, "inversion_inicial") or 15000)
+    gastos  = await _db(db.gastos_inversion)
+    total_g = await _db(db.total_gastado_inversion)
     restante = inv_ini - total_g
 
     texto = (
@@ -1292,7 +1331,7 @@ async def inv_editar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         return ConversationHandler.END
     q = update.callback_query
     await q.answer()
-    actual = float(db.get_config("inversion_inicial") or 15000)
+    actual = float(await _db(db.get_config, "inversion_inicial") or 15000)
     await q.edit_message_text(
         f"✏️ *Editar Inversión Inicial*\n\n"
         f"Monto actual: *{formato_mxn(actual)}*\n\n"
@@ -1310,7 +1349,7 @@ async def inv_editar_monto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
     except ValueError as e:
         await _reply(update, ctx, f"❌ {e}", reply_markup=kb_cancelar())
         return ST_INV_EDITAR_MONTO
-    db.update_inversion_inicial(mxn)
+    await _db(db.update_inversion_inicial, mxn)
     txt_tc = f"\n_TC: ${tc:.2f}_" if tc != 1.0 else ""
     await _reply(update, ctx,
         f"✅ Inversión inicial actualizada a *{formato_mxn(mxn)}*{txt_tc}",
@@ -1328,7 +1367,7 @@ async def inv_agregar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
     q = update.callback_query
     await q.answer()
-    actual = float(db.get_config("inversion_inicial") or 15000)
+    actual = float(await _db(db.get_config, "inversion_inicial") or 15000)
     await q.edit_message_text(
         f"➕ *Agregar Dinero a la Inversión*\n\n"
         f"Monto actual: *{formato_mxn(actual)}*\n\n"
@@ -1346,8 +1385,8 @@ async def inv_agregar_monto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     except ValueError as e:
         await _reply(update, ctx, f"❌ {e}", reply_markup=kb_cancelar())
         return ST_INV_AGREGAR_MONTO
-    db.agregar_a_inversion(mxn)
-    nuevo_total = float(db.get_config("inversion_inicial") or 15000)
+    await _db(db.agregar_a_inversion, mxn)
+    nuevo_total = float(await _db(db.get_config, "inversion_inicial") or 15000)
     txt_tc = f"\n_TC: ${tc:.2f}_" if tc != 1.0 else ""
     await _reply(update, ctx,
         f"✅ *{formato_mxn(mxn)}* agregados a la inversión{txt_tc}\n"
@@ -1369,8 +1408,7 @@ async def del_gasto_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     q = update.callback_query
     await q.answer()
     gasto_id = int(q.data.split(":")[1])
-    gastos = db.gastos_inversion()
-    g = next((x for x in gastos if x["id"] == gasto_id), None)
+    g = await _db(db.get_gasto_inversion, gasto_id)
     if not g:
         await q.edit_message_text("❌ Gasto no encontrado.", reply_markup=kb_volver())
         return ST_MENU
@@ -1390,10 +1428,12 @@ async def del_gasto_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 
 
 async def del_gasto_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
     q = update.callback_query
-    await q.answer()
     gasto_id = int(q.data.split(":")[1])
-    db.delete_gasto_inversion(gasto_id)
+    await _db(db.delete_gasto_inversion, gasto_id)
     await q.answer("🗑 Gasto eliminado", show_alert=True)
     return await _render_inversion(q)
 
@@ -1413,7 +1453,14 @@ async def gasto_inv_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
 
 
 async def gasto_inv_concepto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    ctx.user_data["inv_concepto"] = update.message.text.strip()
+    concepto = update.message.text.strip()
+    if len(concepto) > 200:
+        await _reply(update, ctx,
+            "❌ Concepto demasiado largo (máx. 200 caracteres). Intenta de nuevo:",
+            reply_markup=kb_cancelar(),
+        )
+        return ST_INV_CONCEPTO
+    ctx.user_data["inv_concepto"] = concepto
     await _reply(update, ctx,
         f"✅ Concepto: {ctx.user_data['inv_concepto']}\n\n"
         f"*Paso 2 / 2* — ¿Cuánto?\n_Ej: `500 MX` o `30 USD`_",
@@ -1430,8 +1477,8 @@ async def gasto_inv_monto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
         return ST_INV_MONTO
 
     concepto = ctx.user_data["inv_concepto"]
-    db.registrar_gasto_inversion(concepto, monto, moneda, mxn, tc)
-    restante = float(db.get_config("inversion_inicial") or 15000) - db.total_gastado_inversion()
+    await _db(db.registrar_gasto_inversion, concepto, monto, moneda, mxn, tc)
+    restante = float(await _db(db.get_config, "inversion_inicial") or 15000) - await _db(db.total_gastado_inversion)
     txt_tc = f"\n_TC: ${tc:.2f}_" if tc != 1.0 else ""
     await _reply(update, ctx,
         f"✅ *Gasto registrado*\n{SEP}\n"
@@ -1453,7 +1500,7 @@ async def socios_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     q = update.callback_query
     await q.answer()
-    socios = db.get_socios()
+    socios = await _db(db.get_socios)
     await q.edit_message_text(
         f"⚙️ *Socios actuales:*\n" + "\n".join(f"   • {s}" for s in socios) +
         "\n\nEscribe los nuevos nombres separados por coma:\n_Ej: `Juan, Pedro, María`_",
@@ -1471,7 +1518,7 @@ async def socios_guardar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             parse_mode="Markdown", reply_markup=kb_cancelar(),
         )
         return ST_SOC_NUEVO
-    db.set_socios(partes)
+    await _db(db.set_socios, partes)
     await _reply(update, ctx,
         f"✅ *Socios actualizados:*\n" + "\n".join(f"   • {s}" for s in partes),
         parse_mode="Markdown", reply_markup=kb_volver(),
@@ -1490,7 +1537,7 @@ async def soltar_ped_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     q = update.callback_query
     await q.answer()
     pedido_id = int(q.data.split(":")[1])
-    p = db.get_pedido(pedido_id)
+    p = await _db(db.get_pedido, pedido_id)
     if not p:
         await q.edit_message_text("❌ Pedido no encontrado.", reply_markup=kb_volver_pedidos())
         return ST_MENU
@@ -1509,13 +1556,16 @@ async def soltar_ped_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def soltar_ped_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
     q = update.callback_query
     await q.answer()
     pedido_id = int(q.data.split(":")[1])
     tg_user = update.effective_user
-    nombre = tg_user.first_name or tg_user.username or str(tg_user.id)
+    nombre = nombre_usuario(tg_user)
 
-    pedido = db.soltar_pedido(pedido_id, nombre)
+    pedido = await _db(db.soltar_pedido, pedido_id, nombre)
     if not pedido:
         await q.edit_message_text(
             "⚠️ No se pudo soltar. Verifica que este pedido aún te pertenece.",
@@ -1559,7 +1609,7 @@ async def del_venta_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     q = update.callback_query
     await q.answer()
     venta_id = int(q.data.split(":")[1])
-    v = db.get_venta(venta_id)
+    v = await _db(db.get_venta, venta_id)
     if not v:
         await q.edit_message_text("❌ Venta no encontrada.", reply_markup=kb_volver())
         return ST_MENU
@@ -1582,10 +1632,13 @@ async def del_venta_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
 
 
 async def del_venta_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
     q = update.callback_query
     await q.answer("🗑 Venta eliminada", show_alert=True)
     venta_id = int(q.data.split(":")[1])
-    db.delete_venta(venta_id)
+    await _db(db.delete_venta, venta_id)
     # Vuelve al menú principal
     await q.edit_message_text(
         "✅ Venta eliminada.\n\nSelecciona una opción:",
@@ -1605,7 +1658,7 @@ async def del_pedido_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     q = update.callback_query
     await q.answer()
     pedido_id = int(q.data.split(":")[1])
-    p = db.get_pedido(pedido_id)
+    p = await _db(db.get_pedido, pedido_id)
     if not p:
         await q.edit_message_text("❌ Pedido no encontrado.", reply_markup=kb_volver_pedidos())
         return ST_MENU
@@ -1627,10 +1680,13 @@ async def del_pedido_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def del_pedido_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
     q = update.callback_query
     await q.answer("🗑 Pedido eliminado", show_alert=True)
     pedido_id = int(q.data.split(":")[1])
-    db.delete_pedido(pedido_id)
+    await _db(db.delete_pedido, pedido_id)
     await q.edit_message_text(
         "✅ Pedido eliminado.\n\n¿Qué deseas hacer?",
         reply_markup=kb_pedidos_menu(),
@@ -1648,8 +1704,8 @@ async def bin_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     q = update.callback_query
     await q.answer()
-    todos = db.todos_los_bins()
-    tiendas = db.get_tiendas_bins()
+    todos = await _db(db.todos_los_bins)
+    tiendas = await _db(db.get_tiendas_bins)
     await q.edit_message_text(
         f"🗂 *Bodega de BINs*\n\n"
         f"💳 {len(todos)} BINs  |  🏪 {len(tiendas)} tiendas\n\n"
@@ -1751,7 +1807,6 @@ async def _enviar_en_partes(message, bloques: list[str], reply_markup) -> None:
 
 
 async def bin_buscar_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    import re
     texto = update.message.text
     bins = list(dict.fromkeys(re.findall(r'\b(\d{6})\b', texto)))  # únicos, en orden
 
@@ -1800,24 +1855,25 @@ async def bin_buscar_resultado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
         return ST_MENU
 
     # Múltiples BINs — formato compacto
+    chat = update.effective_chat
     try:
         await update.message.delete()
     except Exception:
         pass
-    aviso = await update.message.reply_text(
+    aviso = await chat.send_message(
         f"⏳ Consultando {len(bins)} BINs...", parse_mode="Markdown"
     )
     bloques = await _procesar_lista_bins(bins)
     await aviso.delete()
     encabezado = f"🔍 *Resultados — {len(bins)} BINs*\n"
     bloques[0] = encabezado + bloques[0]
-    await _enviar_en_partes(update.message, bloques, kb_volver_bins())
+    await _enviar_en_partes(aviso, bloques, kb_volver_bins())
     return ST_MENU
 
 
 async def bin_buscar_txt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """Recibe un archivo .txt con BINs y los procesa todos."""
-    import re
+    MAX_BINS_POR_ARCHIVO = 100
     doc = update.message.document
     if not doc.file_name.lower().endswith(".txt"):
         await _reply(update, ctx,
@@ -1827,6 +1883,7 @@ async def bin_buscar_txt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         )
         return ST_BIN_BUSCAR
 
+    chat = update.effective_chat
     try:
         await update.message.delete()
     except Exception:
@@ -1838,21 +1895,30 @@ async def bin_buscar_txt(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     bins = list(dict.fromkeys(re.findall(r'\b(\d{6})\b', texto)))
 
     if not bins:
-        await update.message.reply_text(
+        await chat.send_message(
             "❌ No encontré BINs de 6 dígitos en el archivo.",
             parse_mode="Markdown",
             reply_markup=kb_volver_bins(),
         )
         return ST_BIN_BUSCAR
 
-    aviso = await update.message.reply_text(
+    if len(bins) > MAX_BINS_POR_ARCHIVO:
+        await chat.send_message(
+            f"⚠️ El archivo tiene *{len(bins)} BINs*. Máximo permitido: {MAX_BINS_POR_ARCHIVO}.\n"
+            f"Divide el archivo en partes más pequeñas.",
+            parse_mode="Markdown",
+            reply_markup=kb_volver_bins(),
+        )
+        return ST_BIN_BUSCAR
+
+    aviso = await chat.send_message(
         f"⏳ Consultando {len(bins)} BINs del archivo...", parse_mode="Markdown"
     )
     bloques = await _procesar_lista_bins(bins)
     await aviso.delete()
     encabezado = f"🔍 *Resultados del archivo — {len(bins)} BINs*\n"
     bloques[0] = encabezado + bloques[0]
-    await _enviar_en_partes(update.message, bloques, kb_volver_bins())
+    await _enviar_en_partes(aviso, bloques, kb_volver_bins())
     return ST_MENU
 
 
@@ -1867,7 +1933,7 @@ async def bin_num(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ST_BIN_NUM
 
     ctx.user_data["bin_num"] = texto
-    tiendas = db.get_tiendas_bins()
+    tiendas = await _db(db.get_tiendas_bins)
 
     if not tiendas:
         await _reply(update, ctx,
@@ -1910,20 +1976,26 @@ async def bin_nueva_tienda_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE
 
 async def bin_nueva_tienda_texto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     nombre = update.message.text.strip()
+    if not nombre or len(nombre) > 50:
+        await _reply(update, ctx,
+            "❌ Nombre inválido (1–50 caracteres). Intenta de nuevo:",
+            reply_markup=kb_cancelar(),
+        )
+        return ST_BIN_NUEVA_TIENDA
     try:
         await update.message.delete()
     except Exception:
         pass
-    db.agregar_tienda_bin(nombre)
+    await _db(db.agregar_tienda_bin, nombre)
     return await _guardar_bin(update, ctx, nombre)
 
 
 async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: str) -> int:
     bin_num = ctx.user_data.pop("bin_num", "")
     tg_user = update.effective_user
-    nombre = tg_user.first_name or tg_user.username or str(tg_user.id)
+    nombre = nombre_usuario(tg_user)
 
-    ok = db.agregar_bin(bin_num, tienda, nombre)
+    ok = await _db(db.agregar_bin, bin_num, tienda, nombre)
     info = await bin_info.consultar_bin(bin_num)
 
     kb_post = InlineKeyboardMarkup([
@@ -1951,7 +2023,7 @@ async def _guardar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE, tienda: s
             await _reply(update, ctx, text, **kw)
 
     if not ok:
-        existente = db.get_bin_existente(bin_num, tienda)
+        existente = await _db(db.get_bin_existente, bin_num, tienda)
         await reply(
             f"⚠️ *BIN ya registrado*\n\n"
             f"💳 `{bin_num}` en *{safe(tienda)}* ya fue registrado\n"
@@ -1989,7 +2061,7 @@ async def bin_ver_todos(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     q = update.callback_query
     await q.answer()
-    bins = db.todos_los_bins()
+    bins = await _db(db.todos_los_bins)
     if not bins:
         await q.edit_message_text("📭 No hay BINs registrados aún.", reply_markup=kb_volver_bins())
         return ST_MENU
@@ -2017,7 +2089,7 @@ async def bin_ver_tiendas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
     q = update.callback_query
     await q.answer()
-    tiendas = db.get_tiendas_bins()
+    tiendas = await _db(db.get_tiendas_bins)
     if not tiendas:
         await q.edit_message_text("📭 No hay tiendas registradas.", reply_markup=kb_volver_bins())
         return ST_MENU
@@ -2042,7 +2114,7 @@ async def bin_ver_tienda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
     tienda = q.data.split(":", 1)[1]
-    bins = db.bins_por_tienda(tienda)
+    bins = await _db(db.bins_por_tienda, tienda)
     if not bins:
         await q.edit_message_text(
             f"📭 No hay BINs para *{safe(tienda)}* aún.",
@@ -2089,7 +2161,7 @@ async def rmv_sel_tiendas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     q = update.callback_query
     await q.answer()
     modo = q.data.split(":", 1)[1]
-    tiendas = db.get_tiendas_bins()
+    tiendas = await _db(db.get_tiendas_bins)
     if not tiendas:
         await q.edit_message_text("📭 No hay tiendas registradas.", reply_markup=kb_volver_bins())
         return ST_MENU
@@ -2114,7 +2186,7 @@ async def rmv_confirmar_tienda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -
     q = update.callback_query
     await q.answer()
     tienda = q.data.split(":", 1)[1]
-    n_bins = len(db.bins_por_tienda(tienda))
+    n_bins = len(await _db(db.bins_por_tienda, tienda))
     await q.edit_message_text(
         f"⚠️ *¿Eliminar esta tienda?*\n\n"
         f"🏪 *{safe(tienda)}*\n"
@@ -2133,8 +2205,8 @@ async def rmv_ok_tienda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
     tienda = q.data.split(":", 1)[1]
-    n_bins = len(db.bins_por_tienda(tienda))
-    db.delete_tienda_bin(tienda)
+    n_bins = len(await _db(db.bins_por_tienda, tienda))
+    await _db(db.delete_tienda_bin, tienda)
     await q.edit_message_text(
         f"✅ *Tienda eliminada*\n\n"
         f"🏪 {safe(tienda)}\n"
@@ -2149,7 +2221,7 @@ async def rmv_sel_bins(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
     tienda = q.data.split(":", 1)[1]
-    bins = db.bins_por_tienda(tienda)
+    bins = await _db(db.bins_por_tienda, tienda)
     if not bins:
         await q.edit_message_text(
             f"📭 No hay BINs en *{safe(tienda)}*.",
@@ -2178,7 +2250,7 @@ async def rmv_confirmar_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     q = update.callback_query
     await q.answer()
     bin_id = int(q.data.split(":")[1])
-    b = db.get_bin(bin_id)
+    b = await _db(db.get_bin, bin_id)
     if not b:
         await q.edit_message_text("❌ BIN no encontrado.", reply_markup=kb_volver_bins())
         return ST_MENU
@@ -2200,9 +2272,9 @@ async def rmv_ok_bin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
     bin_id = int(q.data.split(":")[1])
-    b = db.get_bin(bin_id)
+    b = await _db(db.get_bin, bin_id)
     if b:
-        db.delete_bin(bin_id)
+        await _db(db.delete_bin, bin_id)
         await q.edit_message_text(
             f"✅ *BIN eliminado*\n\n"
             f"💳 `{b['bin']}` de *{safe(b['tienda'])}*",
@@ -2405,6 +2477,5 @@ def main():
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.set_event_loop(asyncio.new_event_loop())
     main()

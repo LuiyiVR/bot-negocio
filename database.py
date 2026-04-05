@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -8,12 +9,20 @@ _data_dir = os.getenv("DATA_DIR", str(Path(__file__).parent))
 DB_PATH = Path(_data_dir) / "negocio.db"
 
 
+@contextmanager
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db():
@@ -102,8 +111,14 @@ def init_db():
         # Migración: agregar columna level si la BD fue creada antes de esta versión
         try:
             conn.execute("ALTER TABLE bin_cache ADD COLUMN level TEXT NOT NULL DEFAULT ''")
-        except Exception:
+        except sqlite3.OperationalError:
             pass  # La columna ya existe
+        # Migración: truncar tarjetas a solo últimos 4 dígitos
+        try:
+            conn.execute("UPDATE ventas SET tarjeta = SUBSTR(tarjeta, -4) WHERE LENGTH(tarjeta) > 4")
+            conn.execute("UPDATE pedidos SET tarjeta = SUBSTR(tarjeta, -4) WHERE LENGTH(tarjeta) > 4")
+        except Exception:
+            pass
 
 
 # ─────────────────────────── VENTAS ──────────────────────────────────────────
@@ -176,8 +191,8 @@ def ventas_semana():
 def crear_pedido(creado_por, tipo, link, descripcion,
                  monto_compra, moneda_compra, monto_compra_mxn,
                  monto_cobrado, moneda_cobrado, monto_cobrado_mxn,
-                 tipo_cambio) -> int:
-    """Crea un pedido y devuelve su ID."""
+                 tipo_cambio) -> dict:
+    """Crea un pedido y devuelve la fila completa como dict."""
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         cur = conn.execute("""
@@ -190,7 +205,8 @@ def crear_pedido(creado_por, tipo, link, descripcion,
               monto_compra, moneda_compra, monto_compra_mxn,
               monto_cobrado, moneda_cobrado, monto_cobrado_mxn,
               tipo_cambio))
-        return cur.lastrowid
+        row = conn.execute("SELECT * FROM pedidos WHERE id=?", (cur.lastrowid,)).fetchone()
+        return dict(row)
 
 
 def get_pedido(pedido_id: int):
@@ -213,73 +229,61 @@ def pedidos_de_usuario(usuario: str):
         ).fetchall()
 
 
-def pedidos_en_proceso_de(usuario: str):
-    """Pedidos que el usuario aceptó pero aún no ha completado."""
-    with get_conn() as conn:
-        return conn.execute(
-            "SELECT * FROM pedidos WHERE aceptado_por=? AND estado='en_proceso' ORDER BY fecha_creacion DESC",
-            (usuario,)
-        ).fetchall()
-
-
 def aceptar_pedido(pedido_id: int, usuario: str) -> dict | None:
-    """Reserva el pedido para un usuario (estado: en_proceso). No registra venta aún."""
-    p = get_pedido(pedido_id)
-    if not p or p["estado"] != "pendiente":
-        return None
-
+    """Reserva el pedido para un usuario (estado: en_proceso). Operación atómica."""
     fecha_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
-        conn.execute("""
+        cur = conn.execute("""
             UPDATE pedidos
             SET estado='en_proceso', aceptado_por=?, fecha_completado=?
-            WHERE id=?
+            WHERE id=? AND estado='pendiente'
         """, (usuario, fecha_now, pedido_id))
-    return dict(p)
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT * FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+        return dict(row)
 
 
 def completar_pedido(pedido_id: int, usuario: str, tarjeta: str) -> dict | None:
-    """Marca el pedido como completado y registra la venta."""
-    p = get_pedido(pedido_id)
-    if not p or p["estado"] != "en_proceso" or p["aceptado_por"] != usuario:
-        return None
-
+    """Marca el pedido como completado y registra la venta. Operación atómica."""
     fecha_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
-        conn.execute("""
+        cur = conn.execute("""
             UPDATE pedidos
             SET estado='completado', tarjeta=?, fecha_completado=?
-            WHERE id=?
-        """, (tarjeta, fecha_now, pedido_id))
-
-    registrar_venta(
-        usuario=usuario,
-        tarjeta=tarjeta,
-        descripcion=f"[{p['tipo']}] {p['descripcion']}",
-        monto_cobrado=p["monto_cobrado"],
-        moneda_cobrado=p["moneda_cobrado"],
-        monto_cobrado_mxn=p["monto_cobrado_mxn"],
-        monto_gastado=p["monto_compra"],
-        moneda_gastado=p["moneda_compra"],
-        monto_gastado_mxn=p["monto_compra_mxn"],
-        tipo_cambio=p["tipo_cambio"],
-        pedido_id=pedido_id,
-    )
-    return dict(p)
+            WHERE id=? AND estado='en_proceso' AND aceptado_por=?
+        """, (tarjeta, fecha_now, pedido_id, usuario))
+        if cur.rowcount == 0:
+            return None
+        p = conn.execute("SELECT * FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+        # Registrar venta en la misma transacción
+        conn.execute("""
+            INSERT INTO ventas
+            (fecha, usuario, tarjeta, descripcion,
+             monto_cobrado, moneda_cobrado, monto_cobrado_mxn,
+             monto_gastado, moneda_gastado, monto_gastado_mxn,
+             tipo_cambio, pedido_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (fecha_now, usuario, tarjeta,
+              f"[{p['tipo']}] {p['descripcion']}",
+              p["monto_cobrado"], p["moneda_cobrado"], p["monto_cobrado_mxn"],
+              p["monto_compra"], p["moneda_compra"], p["monto_compra_mxn"],
+              p["tipo_cambio"], pedido_id))
+        return dict(p)
 
 
 def soltar_pedido(pedido_id: int, usuario: str) -> dict | None:
-    """Regresa un pedido de en_proceso a pendiente (lo suelta quien lo tenía)."""
-    p = get_pedido(pedido_id)
-    if not p or p["estado"] != "en_proceso" or p["aceptado_por"] != usuario:
-        return None
+    """Regresa un pedido de en_proceso a pendiente. Operación atómica."""
     with get_conn() as conn:
-        conn.execute("""
+        cur = conn.execute("""
             UPDATE pedidos
             SET estado='pendiente', aceptado_por='', fecha_completado=''
-            WHERE id=?
-        """, (pedido_id,))
-    return dict(p)
+            WHERE id=? AND estado='en_proceso' AND aceptado_por=?
+        """, (pedido_id, usuario))
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT * FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+        return dict(row)
 
 
 def cancelar_pedido(pedido_id: int):
@@ -311,9 +315,12 @@ def update_inversion_inicial(monto: float):
 
 
 def agregar_a_inversion(monto_extra: float):
-    """Suma monto_extra a la inversión inicial actual."""
-    actual = float(get_config("inversion_inicial") or 15000)
-    set_config("inversion_inicial", str(actual + monto_extra))
+    """Suma monto_extra a la inversión inicial actual. Operación atómica."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE config SET valor = CAST(CAST(valor AS REAL) + ? AS TEXT) WHERE clave='inversion_inicial'",
+            (monto_extra,)
+        )
 
 
 # ─────────────────────────── INVERSIÓN ───────────────────────────────────────
@@ -330,6 +337,12 @@ def registrar_gasto_inversion(concepto, monto, moneda, monto_mxn, tipo_cambio):
 def gastos_inversion():
     with get_conn() as conn:
         return conn.execute("SELECT * FROM inversion ORDER BY fecha DESC").fetchall()
+
+
+def get_gasto_inversion(gasto_id: int):
+    """Devuelve un gasto de inversión por ID, o None si no existe."""
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM inversion WHERE id=?", (gasto_id,)).fetchone()
 
 
 def total_gastado_inversion():
