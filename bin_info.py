@@ -20,7 +20,7 @@ import os
 import urllib.request
 from collections import Counter
 
-import database as db
+import db
 
 logger = logging.getLogger(__name__)
 
