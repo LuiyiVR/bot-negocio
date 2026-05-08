@@ -73,3 +73,21 @@ async def edit_q(q, text: str, **kwargs):
         # edit_message_caption no acepta `text`; usa `caption`.
         return await q.edit_message_caption(caption=text, **kwargs)
     return await q.edit_message_text(text=text, **kwargs)
+
+
+async def edit_to_text(q, text: str, **kwargs):
+    """Reemplaza el mensaje del callback con un mensaje de texto.
+
+    Útil al cambiar de contexto (volver a un menú, listar, etc.):
+    - Si el mensaje original es foto, lo borra y envía uno nuevo de texto.
+    - Si es texto, edita el texto.
+
+    Devuelve el Message resultante (o None).
+    """
+    if q.message and q.message.photo:
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        return await q.message.chat.send_message(text=text, **kwargs)
+    return await q.edit_message_text(text=text, **kwargs)

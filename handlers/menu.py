@@ -3,7 +3,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
 import db
-from utils import autorizado, rechazar, db_thread
+from utils import autorizado, rechazar, db_thread, edit_to_text
 from keyboards import kb_menu
 from states import ST_MENU
 
@@ -37,8 +37,8 @@ async def mostrar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if update.callback_query:
         q = update.callback_query
         await q.answer()
-        msg = await q.edit_message_text(
-            texto, parse_mode="Markdown", reply_markup=kb_menu(),
+        msg = await edit_to_text(
+            q, texto, parse_mode="Markdown", reply_markup=kb_menu(),
         )
     else:
         msg = await update.message.reply_text(

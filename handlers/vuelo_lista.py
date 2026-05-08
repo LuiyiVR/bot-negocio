@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 import db
 from formatters import safe, fmt_vuelo, icono_estado, nombre_estado
 from currency import formato_mxn
-from utils import autorizado, rechazar, db_thread
+from utils import autorizado, rechazar, db_thread, edit_to_text
 from keyboards import kb_volver, kb_acciones_vuelo
 from states import ST_MENU
 
@@ -51,7 +51,7 @@ async def vl_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     vuelos = await db_thread(db.vuelos_pendientes)
     if not vuelos:
-        await q.edit_message_text(
+        await edit_to_text(q,
             "⏳ *Pendientes*\n\n_No hay vuelos pendientes en este momento._",
             parse_mode="Markdown", reply_markup=kb_volver(),
         )
@@ -77,7 +77,7 @@ async def vl_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             f"   💰 *{formato_mxn(v['monto_cobrado'])}*  👤 {safe(v['creado_por'])}"
         )
 
-    await q.edit_message_text(
+    await edit_to_text(q,
         "\n\n".join(lineas),
         parse_mode="Markdown",
         reply_markup=_build_kb_lista(vuelos, user_id),
@@ -101,7 +101,7 @@ async def vl_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     vuelos = await db_thread(db.vuelos_de_usuario, user_id)
 
     if not vuelos:
-        await q.edit_message_text(
+        await edit_to_text(q,
             "🛫 *Mis Vuelos*\n\n_Aún no has tomado ningún vuelo._",
             parse_mode="Markdown", reply_markup=kb_volver(),
         )
@@ -131,7 +131,7 @@ async def vl_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
                 f"  *#{v['id']}* {adjunto}{ruta}*{formato_mxn(v['monto_cobrado'])}*"
             )
 
-    await q.edit_message_text(
+    await edit_to_text(q,
         "\n".join(lineas),
         parse_mode="Markdown",
         reply_markup=_build_kb_lista(vuelos, user_id),
@@ -154,7 +154,7 @@ async def vl_ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     vuelo = await db_thread(db.get_vuelo, vid)
     if not vuelo:
-        await q.edit_message_text("❌ Vuelo no encontrado.", reply_markup=kb_volver())
+        await edit_to_text(q, "❌ Vuelo no encontrado.", reply_markup=kb_volver())
         return ST_MENU
 
     user_id = update.effective_user.id

@@ -19,19 +19,27 @@ from states import ST_MENU, ST_REP_OTRO_MES
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _resumen_vuelos(vuelos: list) -> dict:
-    """Cuenta y suma vuelos por estado."""
+    """Cuenta y suma vuelos por estado.
+
+    Los cancelados se reportan solo en `cancelados` (informativo) y no
+    cuentan en `total` ni en ningún cálculo de ingresos/tasa de éxito.
+    """
     r = {
-        "total":        len(vuelos),
+        "total":        0,    # solo activos (no cancelados)
         "pendientes":   0,
         "en_proceso":   0,
         "completados":  0,
-        "cancelados":   0,
+        "cancelados":   0,    # solo informativo
         "ingreso_completados": 0.0,
         "monto_pendiente":     0.0,  # vuelos pendientes + en_proceso
     }
     for v in vuelos:
         e = v["estado"]
         m = v["monto_cobrado"]
+        if e == "cancelado":
+            r["cancelados"] += 1
+            continue
+        r["total"] += 1
         if e == "pendiente":
             r["pendientes"] += 1
             r["monto_pendiente"] += m
@@ -41,8 +49,6 @@ def _resumen_vuelos(vuelos: list) -> dict:
         elif e == "completado":
             r["completados"] += 1
             r["ingreso_completados"] += m
-        elif e == "cancelado":
-            r["cancelados"] += 1
     return r
 
 
@@ -58,10 +64,10 @@ def _gastos_fondo_rango(gastos: list, desde_iso: str, hasta_iso: str | None = No
 
 
 def _tasa_exito(r: dict) -> float:
-    cerrados = r["completados"] + r["cancelados"]
-    if cerrados == 0:
+    """% de vuelos activos que ya están completados (cancelados no penalizan)."""
+    if r["total"] == 0:
         return 0.0
-    return (r["completados"] / cerrados) * 100
+    return (r["completados"] / r["total"]) * 100
 
 
 # ═════════════════════════════════════════════════════════════════════════════
