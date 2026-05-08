@@ -254,18 +254,28 @@ async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _txt_vuelo(v) -> str:
-    return (
-        f"#{v['id']} · {v['estado'].upper()}\n"
-        f"  {v['aerolinea']} · {v['origen']} → {v['destino']}\n"
-        f"  {v['fecha_vuelo']}  {v['horario']}\n"
-        f"  Pasajeros: {v['pasajeros']}\n"
-        f"  Extras:    {v['extras'] or '—'}\n"
-        f"  Cobrado:   ${v['monto_cobrado']:,.2f} MXN\n"
-        f"  Alta:      {v['creado_por']}  ({fmt_fecha_corta(v['fecha_creacion'])})\n"
-        f"  Tomado:    {v['aceptado_por'] or '—'}\n"
-        f"  Completado:{fmt_fecha_corta(v['fecha_completado'])}\n"
-        f"  Cancelado: {v['cancelado_por'] or '—'}  ({fmt_fecha_corta(v['fecha_cancelado'])})\n"
-    )
+    aero = v["aerolinea"] or ""
+    ori  = v["origen"]    or ""
+    des  = v["destino"]   or ""
+    fv   = v["fecha_vuelo"] or ""
+    hr   = v["horario"]   or ""
+    foto_marca = "[con captura] " if (v["foto_file_id"] or "") else ""
+
+    lineas = [f"#{v['id']} · {foto_marca}{v['estado'].upper()}"]
+    if aero or ori or des:
+        lineas.append(f"  {aero} · {ori} → {des}".rstrip(" ·"))
+    if fv or hr:
+        lineas.append(f"  {fv}  {hr}".rstrip())
+    lineas += [
+        f"  Pasajeros: {v['pasajeros']}",
+        f"  Extras:    {v['extras'] or '—'}",
+        f"  Cobrado:   ${v['monto_cobrado']:,.2f} MXN",
+        f"  Alta:      {v['creado_por']}  ({fmt_fecha_corta(v['fecha_creacion'])})",
+        f"  Tomado:    {v['aceptado_por'] or '—'}",
+        f"  Completado:{fmt_fecha_corta(v['fecha_completado'])}",
+        f"  Cancelado: {v['cancelado_por'] or '—'}  ({fmt_fecha_corta(v['fecha_cancelado'])})",
+    ]
+    return "\n".join(lineas) + "\n"
 
 
 def _construir_txt(titulo: str, vuelos: list, gastos: list, resumen: dict, gastos_total: float) -> bytes:

@@ -22,8 +22,8 @@ from config import BOT_TOKEN, ALLOWED_IDS
 # ── Handlers ─────────────────────────────────────────────────────────────────
 from handlers.menu import mostrar_menu
 from handlers.vuelo_crear import (
-    vc_inicio, vc_aerolinea, vc_origen, vc_destino, vc_fecha, vc_horario,
-    vc_pasajeros, vc_extras, vc_skip_extras, vc_cobrado, vc_publicar,
+    vc_inicio, vc_foto, vc_foto_no_es_imagen,
+    vc_pasajeros, vc_cobrado, vc_publicar,
 )
 from handlers.vuelo_acciones import (
     vac_tomar, vac_soltar, vac_completar,
@@ -55,8 +55,7 @@ from handlers.configuracion import (
 
 from states import (
     ST_MENU,
-    ST_VC_AEROLINEA, ST_VC_ORIGEN, ST_VC_DESTINO, ST_VC_FECHA, ST_VC_HORARIO,
-    ST_VC_PASAJEROS, ST_VC_EXTRAS, ST_VC_COBRADO, ST_VC_CONFIRMAR,
+    ST_VC_FOTO, ST_VC_PASAJEROS, ST_VC_COBRADO, ST_VC_CONFIRMAR,
     ST_FONDO_CONCEPTO, ST_FONDO_MONTO,
     ST_FONDO_EDITAR_MTO, ST_FONDO_AGREGAR_MTO,
     ST_REP_OTRO_MES, ST_CONFIG_SOCIOS,
@@ -151,34 +150,15 @@ def main():
             ST_MENU: _menu_callbacks(),
 
             # ── Crear vuelo ──────────────────────────────────────────────────
-            ST_VC_AEROLINEA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vc_aerolinea),
-                CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
-            ],
-            ST_VC_ORIGEN: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vc_origen),
-                CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
-            ],
-            ST_VC_DESTINO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vc_destino),
-                CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
-            ],
-            ST_VC_FECHA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vc_fecha),
-                CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
-            ],
-            ST_VC_HORARIO: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vc_horario),
+            ST_VC_FOTO: [
+                MessageHandler(filters.PHOTO, vc_foto),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, vc_foto_no_es_imagen),
+                MessageHandler(filters.Document.ALL, vc_foto_no_es_imagen),
                 CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
             ],
             ST_VC_PASAJEROS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, vc_pasajeros),
                 CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
-            ],
-            ST_VC_EXTRAS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vc_extras),
-                CallbackQueryHandler(vc_skip_extras, pattern=r"^vc_skip_extras$"),
-                CallbackQueryHandler(mostrar_menu,  pattern=r"^menu$"),
             ],
             ST_VC_COBRADO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, vc_cobrado),

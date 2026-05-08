@@ -10,13 +10,27 @@ from keyboards import kb_volver, kb_acciones_vuelo
 from states import ST_MENU
 
 
+def _etiqueta_vuelo(v) -> str:
+    """Etiqueta breve para botón de lista, robusta a campos vacíos."""
+    aero = (v["aerolinea"] or "").strip()
+    ori  = (v["origen"]    or "").strip()
+    des  = (v["destino"]   or "").strip()
+    if aero or ori or des:
+        partes = []
+        if aero:
+            partes.append(aero[:18])
+        if ori or des:
+            partes.append(f"{ori[:8]}→{des[:8]}")
+        return " · ".join(partes)
+    # Vuelo nuevo (con captura): mostrar creador y monto
+    return f"{(v['creado_por'] or '?')[:14]} · {formato_mxn(v['monto_cobrado'])}"
+
+
 def _build_kb_lista(vuelos, user_id: int):
     filas = []
     for v in vuelos:
-        # Botón para ver el vuelo en detalle
         filas.append([InlineKeyboardButton(
-            f"{icono_estado(v['estado'])} #{v['id']} · {v['aerolinea'][:18]} · "
-            f"{v['origen'][:8]}→{v['destino'][:8]}",
+            f"{icono_estado(v['estado'])} #{v['id']} · {_etiqueta_vuelo(v)}",
             callback_data=f"vl_ver:{v['id']}",
         )])
     filas.append([InlineKeyboardButton("🏠  Menú Principal", callback_data="menu")])
@@ -47,10 +61,19 @@ async def vl_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     lineas = [f"⏳ *Pendientes* ({len(vuelos)})\n─────────────────────────────"]
     for v in vuelos:
+        aero = v["aerolinea"] or ""
+        ori  = v["origen"]    or ""
+        des  = v["destino"]   or ""
+        fv   = v["fecha_vuelo"] or ""
+        hr   = v["horario"]   or ""
+        ruta_linea = ""
+        if aero or ori or des:
+            ruta_linea = f"\n   ✈️ {safe(aero)}  ·  {safe(ori)} → {safe(des)}"
+        if fv or hr:
+            ruta_linea += f"\n   📅 {safe(fv)}   🕐 {safe(hr)}"
+        adjunto = "  📷" if v["foto_file_id"] else ""
         lineas.append(
-            f"*#{v['id']}* ✈️ {safe(v['aerolinea'])}  ·  "
-            f"{safe(v['origen'])} → {safe(v['destino'])}\n"
-            f"   📅 {safe(v['fecha_vuelo'])}   🕐 {safe(v['horario'])}\n"
+            f"*#{v['id']}*{adjunto}{ruta_linea}\n"
             f"   💰 *{formato_mxn(v['monto_cobrado'])}*  👤 {safe(v['creado_por'])}"
         )
 
@@ -97,10 +120,15 @@ async def vl_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             continue
         lineas.append(f"\n*{icono_estado(estado)} {nombre_estado(estado)}* ({len(grupo)})")
         for v in grupo:
+            aero = v["aerolinea"] or ""
+            ori  = v["origen"]    or ""
+            des  = v["destino"]   or ""
+            ruta = ""
+            if aero or ori or des:
+                ruta = f"✈️ {safe(aero)}  ·  {safe(ori)} → {safe(des)}  ·  "
+            adjunto = "📷  " if v["foto_file_id"] else ""
             lineas.append(
-                f"  *#{v['id']}* ✈️ {safe(v['aerolinea'])}  ·  "
-                f"{safe(v['origen'])} → {safe(v['destino'])}  ·  "
-                f"*{formato_mxn(v['monto_cobrado'])}*"
+                f"  *#{v['id']}* {adjunto}{ruta}*{formato_mxn(v['monto_cobrado'])}*"
             )
 
     await q.edit_message_text(
@@ -133,10 +161,25 @@ async def vl_ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     filas = kb_acciones_vuelo(vuelo, user_id)
     filas.append([InlineKeyboardButton("⬅️  Volver",         callback_data="vl_pendientes")])
     filas.append([InlineKeyboardButton("🏠  Menú Principal", callback_data="menu")])
+    kb = InlineKeyboardMarkup(filas)
 
-    await q.edit_message_text(
-        fmt_vuelo(vuelo),
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(filas),
-    )
+    foto = vuelo["foto_file_id"]
+    if foto:
+        # No se puede editar un mensaje de texto a foto: borramos y mandamos nuevo.
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        await q.message.chat.send_photo(
+            photo=foto,
+            caption=fmt_vuelo(vuelo),
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+    else:
+        await q.edit_message_text(
+            fmt_vuelo(vuelo),
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
     return ST_MENU

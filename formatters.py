@@ -56,22 +56,47 @@ def nombre_usuario(tg_user) -> str:
     return tg_user.first_name or tg_user.username or str(tg_user.id)
 
 
+def _g(v):
+    """Accesor uniforme para sqlite3.Row, dict o cualquier mapping."""
+    if hasattr(v, "keys"):
+        keys = set(v.keys())
+        return lambda k: (v[k] if k in keys else "")
+    return lambda k: getattr(v, k, "")
+
+
 def fmt_vuelo(v, *, breve: bool = False, mostrar_pasajeros: bool = True) -> str:
-    """Tarjeta de vuelo formateada (acepta sqlite3.Row o dict)."""
-    g = (lambda k: v[k]) if hasattr(v, "keys") else (lambda k: getattr(v, k))
+    """Tarjeta de vuelo formateada (acepta sqlite3.Row o dict).
+
+    Soporta vuelos nuevos (foto+pasajeros+monto) y los viejos (con aerolínea/ruta).
+    """
+    g = _g(v)
 
     estado = g("estado")
     ico = icono_estado(estado)
 
-    lineas = [
-        f"{ico} *Vuelo #{g('id')}* — _{nombre_estado(estado)}_",
-        f"✈️ *{safe(g('aerolinea'))}*",
-        f"🛫 {safe(g('origen'))} → {safe(g('destino'))}",
-        f"📅 {safe(g('fecha_vuelo'))}   🕐 {safe(g('horario'))}",
-    ]
+    lineas = [f"{ico} *Vuelo #{g('id')}* — _{nombre_estado(estado)}_"]
+
+    aerolinea = g("aerolinea")
+    if aerolinea:
+        lineas.append(f"✈️ *{safe(aerolinea)}*")
+
+    origen, destino = g("origen"), g("destino")
+    if origen or destino:
+        lineas.append(f"🛫 {safe(origen)} → {safe(destino)}")
+
+    fecha_vuelo, horario = g("fecha_vuelo"), g("horario")
+    if fecha_vuelo or horario:
+        sep = "   " if (fecha_vuelo and horario) else ""
+        lineas.append(
+            f"📅 {safe(fecha_vuelo)}{sep}🕐 {safe(horario)}".rstrip()
+        )
+
+    if g("foto_file_id"):
+        lineas.append("📷 _Captura adjunta_")
 
     if not breve and mostrar_pasajeros:
-        lineas.append(f"👥 {safe(g('pasajeros'))}")
+        if g("pasajeros"):
+            lineas.append(f"👥 {safe(g('pasajeros'))}")
         extras = g("extras")
         if extras:
             lineas.append(f"📝 _{safe(extras)}_")

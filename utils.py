@@ -61,3 +61,15 @@ async def reply_clean(update: Update, ctx: ContextTypes.DEFAULT_TYPE, text: str,
 def remember_panel(ctx: ContextTypes.DEFAULT_TYPE, msg):
     if msg:
         ctx.user_data["_last_msg"] = (msg.chat_id, msg.message_id)
+
+
+async def edit_q(q, text: str, **kwargs):
+    """Edita un callback_query, sea su mensaje texto o foto.
+
+    - Si el mensaje original tiene foto, edita el caption.
+    - Si es texto, edita el texto.
+    """
+    if q.message and q.message.photo:
+        # edit_message_caption no acepta `text`; usa `caption`.
+        return await q.edit_message_caption(caption=text, **kwargs)
+    return await q.edit_message_text(text=text, **kwargs)

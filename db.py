@@ -34,11 +34,12 @@ def init_db():
                 fecha_creacion    TEXT    NOT NULL,
                 creado_por        TEXT    NOT NULL,
                 creado_por_id     INTEGER NOT NULL,
-                aerolinea         TEXT    NOT NULL,
-                origen            TEXT    NOT NULL,
-                destino           TEXT    NOT NULL,
-                fecha_vuelo       TEXT    NOT NULL,
-                horario           TEXT    NOT NULL,
+                aerolinea         TEXT    NOT NULL DEFAULT '',
+                origen            TEXT    NOT NULL DEFAULT '',
+                destino           TEXT    NOT NULL DEFAULT '',
+                fecha_vuelo       TEXT    NOT NULL DEFAULT '',
+                horario           TEXT    NOT NULL DEFAULT '',
+                foto_file_id      TEXT    NOT NULL DEFAULT '',
                 pasajeros         TEXT    NOT NULL,
                 extras            TEXT    NOT NULL DEFAULT '',
                 monto_cobrado     REAL    NOT NULL,
@@ -103,6 +104,13 @@ def init_db():
             (SOCIOS_DEFAULT,),
         )
 
+        # Migración: añadir foto_file_id si la DB es de antes del cambio a captura.
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(vuelos)")}
+        if "foto_file_id" not in cols:
+            conn.execute(
+                "ALTER TABLE vuelos ADD COLUMN foto_file_id TEXT NOT NULL DEFAULT ''"
+            )
+
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -113,18 +121,16 @@ def _now() -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def crear_vuelo(*, creado_por: str, creado_por_id: int,
-                aerolinea: str, origen: str, destino: str,
-                fecha_vuelo: str, horario: str,
-                pasajeros: str, extras: str,
+                foto_file_id: str, pasajeros: str,
                 monto_cobrado: float) -> dict:
     with get_conn() as conn:
         cur = conn.execute("""
             INSERT INTO vuelos
-            (fecha_creacion, creado_por, creado_por_id, aerolinea, origen, destino,
-             fecha_vuelo, horario, pasajeros, extras, monto_cobrado)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-        """, (_now(), creado_por, creado_por_id, aerolinea, origen, destino,
-              fecha_vuelo, horario, pasajeros, extras, monto_cobrado))
+            (fecha_creacion, creado_por, creado_por_id,
+             foto_file_id, pasajeros, monto_cobrado)
+            VALUES (?,?,?,?,?,?)
+        """, (_now(), creado_por, creado_por_id,
+              foto_file_id, pasajeros, monto_cobrado))
         row = conn.execute("SELECT * FROM vuelos WHERE id=?", (cur.lastrowid,)).fetchone()
         return dict(row)
 

@@ -3,13 +3,8 @@
 ST_MENU = 0
 
 # ── Crear vuelo ──────────────────────────────────────────────────────────────
-ST_VC_AEROLINEA  = 100
-ST_VC_ORIGEN     = 101
-ST_VC_DESTINO    = 102
-ST_VC_FECHA      = 103
-ST_VC_HORARIO    = 104
+ST_VC_FOTO       = 100
 ST_VC_PASAJEROS  = 105
-ST_VC_EXTRAS     = 106
 ST_VC_COBRADO    = 107
 ST_VC_CONFIRMAR  = 108
 
