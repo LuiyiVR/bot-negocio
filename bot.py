@@ -70,6 +70,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def on_error(update, ctx):
+    """Loggea cualquier excepción no atrapada y avisa al usuario."""
+    logger.exception("Excepción no atrapada: %s", ctx.error)
+    try:
+        if update and getattr(update, "callback_query", None):
+            await update.callback_query.answer(
+                f"⚠️ Error: {type(ctx.error).__name__}", show_alert=True,
+            )
+        elif update and getattr(update, "effective_chat", None):
+            await ctx.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"⚠️ Error interno: `{type(ctx.error).__name__}: {ctx.error}`",
+                parse_mode="Markdown",
+            )
+    except Exception:
+        pass
+
+
 def _menu_callbacks():
     """Callbacks que pueden dispararse desde el estado ST_MENU."""
     return [
@@ -228,6 +246,7 @@ def main():
     )
 
     app.add_handler(conv)
+    app.add_error_handler(on_error)
     logger.info("✅ Bot iniciado y escuchando…")
     app.run_polling(drop_pending_updates=True)
 

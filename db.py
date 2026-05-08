@@ -123,14 +123,19 @@ def _now() -> str:
 def crear_vuelo(*, creado_por: str, creado_por_id: int,
                 foto_file_id: str, pasajeros: str,
                 monto_cobrado: float) -> dict:
+    # Pasamos '' para los campos heredados (aerolinea/origen/destino/fecha_vuelo/
+    # horario/extras) porque en DBs creadas antes de la migración esas columnas
+    # están como NOT NULL sin default, y SQLite no soporta ALTER COLUMN.
     with get_conn() as conn:
         cur = conn.execute("""
             INSERT INTO vuelos
             (fecha_creacion, creado_por, creado_por_id,
-             foto_file_id, pasajeros, monto_cobrado)
-            VALUES (?,?,?,?,?,?)
+             aerolinea, origen, destino, fecha_vuelo, horario,
+             foto_file_id, pasajeros, extras, monto_cobrado)
+            VALUES (?,?,?, ?,?,?,?,?, ?,?,?,?)
         """, (_now(), creado_por, creado_por_id,
-              foto_file_id, pasajeros, monto_cobrado))
+              '', '', '', '', '',
+              foto_file_id, pasajeros, '', monto_cobrado))
         row = conn.execute("SELECT * FROM vuelos WHERE id=?", (cur.lastrowid,)).fetchone()
         return dict(row)
 
