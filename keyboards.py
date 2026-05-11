@@ -79,6 +79,18 @@ def kb_acciones_vuelo(vuelo, user_id: int):
                 InlineKeyboardButton(f"✔️  Completar (#{vid})", callback_data=f"vac_completar:{vid}"),
                 InlineKeyboardButton(f"🔓  Soltar (#{vid})",     callback_data=f"vac_soltar:{vid}"),
             ])
+            filas.append([InlineKeyboardButton(f"💥  Vuelo caído (#{vid})",
+                                               callback_data=f"vac_caido:{vid}")])
+        if creador == user_id:
+            filas.append([InlineKeyboardButton(f"❌  Cancelar (#{vid})",
+                                               callback_data=f"vac_cancelar:{vid}")])
+
+    elif estado == "caido":
+        if tomador == user_id:
+            filas.append([
+                InlineKeyboardButton(f"✔️  Completar (#{vid})", callback_data=f"vac_completar:{vid}"),
+                InlineKeyboardButton(f"🔓  Liberar (#{vid})",   callback_data=f"vac_caido_liberar:{vid}"),
+            ])
         if creador == user_id:
             filas.append([InlineKeyboardButton(f"❌  Cancelar (#{vid})",
                                                callback_data=f"vac_cancelar:{vid}")])
@@ -103,6 +115,17 @@ def kb_confirmar_cancelar(vuelo_id: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅  Sí, cancelar", callback_data=f"vac_cancelar_ok:{vuelo_id}")],
         [InlineKeyboardButton("⬅️  No, volver",   callback_data="menu")],
+    ])
+
+
+def kb_caido_opciones(vuelo_id: int):
+    """Pregunta qué hacer cuando se marca un vuelo como caído."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔓  Liberar para todos",
+                              callback_data=f"vac_caido_soltar:{vuelo_id}")],
+        [InlineKeyboardButton("📌  Mantener para mí",
+                              callback_data=f"vac_caido_mantener:{vuelo_id}")],
+        [InlineKeyboardButton("⬅️  Cancelar", callback_data="menu")],
     ])
 
 

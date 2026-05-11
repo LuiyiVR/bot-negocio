@@ -26,8 +26,9 @@ from handlers.vuelo_crear import (
     vc_pasajeros, vc_cobrado, vc_publicar,
 )
 from handlers.vuelo_acciones import (
-    vac_tomar, vac_soltar, vac_completar,
+    vac_tomar, vac_soltar, vac_completar, vac_completar_foto,
     vac_cancelar_inicio, vac_cancelar_ok,
+    vac_caido_inicio, vac_caido_soltar, vac_caido_mantener, vac_caido_liberar,
 )
 from handlers.vuelo_lista import vl_pendientes, vl_mios, vl_ver
 from handlers.reportes import (
@@ -56,6 +57,7 @@ from handlers.configuracion import (
 from states import (
     ST_MENU,
     ST_VC_FOTO, ST_VC_PASAJEROS, ST_VC_COBRADO, ST_VC_CONFIRMAR,
+    ST_VAC_COMPLETAR_FOTO,
     ST_FONDO_CONCEPTO, ST_FONDO_MONTO,
     ST_FONDO_EDITAR_MTO, ST_FONDO_AGREGAR_MTO,
     ST_REP_OTRO_MES, ST_CONFIG_SOCIOS,
@@ -104,6 +106,10 @@ def _menu_callbacks():
         CallbackQueryHandler(vac_completar,        pattern=r"^vac_completar:\d+$"),
         CallbackQueryHandler(vac_cancelar_inicio,  pattern=r"^vac_cancelar:\d+$"),
         CallbackQueryHandler(vac_cancelar_ok,      pattern=r"^vac_cancelar_ok:\d+$"),
+        CallbackQueryHandler(vac_caido_inicio,     pattern=r"^vac_caido:\d+$"),
+        CallbackQueryHandler(vac_caido_soltar,     pattern=r"^vac_caido_soltar:\d+$"),
+        CallbackQueryHandler(vac_caido_mantener,   pattern=r"^vac_caido_mantener:\d+$"),
+        CallbackQueryHandler(vac_caido_liberar,    pattern=r"^vac_caido_liberar:\d+$"),
 
         # Reportes
         CallbackQueryHandler(rep_mes,              pattern=r"^rep_mes$"),
@@ -157,12 +163,16 @@ def main():
         entry_points=[
             CommandHandler("start", mostrar_menu),
             CommandHandler("rmv",   rmv_menu),
-            # Permite tomar/completar/soltar/cancelar desde notificaciones externas
+            # Permite tomar/completar/soltar/cancelar/caído desde notificaciones externas
             CallbackQueryHandler(vac_tomar,           pattern=r"^vac_tomar:\d+$"),
             CallbackQueryHandler(vac_completar,       pattern=r"^vac_completar:\d+$"),
             CallbackQueryHandler(vac_soltar,          pattern=r"^vac_soltar:\d+$"),
             CallbackQueryHandler(vac_cancelar_inicio, pattern=r"^vac_cancelar:\d+$"),
             CallbackQueryHandler(vac_cancelar_ok,     pattern=r"^vac_cancelar_ok:\d+$"),
+            CallbackQueryHandler(vac_caido_inicio,    pattern=r"^vac_caido:\d+$"),
+            CallbackQueryHandler(vac_caido_soltar,    pattern=r"^vac_caido_soltar:\d+$"),
+            CallbackQueryHandler(vac_caido_mantener,  pattern=r"^vac_caido_mantener:\d+$"),
+            CallbackQueryHandler(vac_caido_liberar,   pattern=r"^vac_caido_liberar:\d+$"),
         ],
         states={
             ST_MENU: _menu_callbacks(),
@@ -184,6 +194,14 @@ def main():
             ],
             ST_VC_CONFIRMAR: [
                 CallbackQueryHandler(vc_publicar,  pattern=r"^vc_publicar$"),
+                CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
+            ],
+
+            # ── Completar vuelo: esperando captura de confirmación ───────────
+            ST_VAC_COMPLETAR_FOTO: [
+                MessageHandler(filters.PHOTO, vac_completar_foto),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, vac_completar_foto),
+                MessageHandler(filters.Document.ALL, vac_completar_foto),
                 CallbackQueryHandler(mostrar_menu, pattern=r"^menu$"),
             ],
 

@@ -23,15 +23,21 @@ def _resumen_vuelos(vuelos: list) -> dict:
 
     Los cancelados se reportan solo en `cancelados` (informativo) y no
     cuentan en `total` ni en ningún cálculo de ingresos/tasa de éxito.
+
+    Los caídos cuentan en `total` y en `caidos`, pero su monto NO entra a
+    `ingreso_completados`; queda en `monto_caido` (dinero "atorado" que solo
+    se contará como ganancia cuando el usuario confirme que sacó el vuelo).
     """
     r = {
         "total":        0,    # solo activos (no cancelados)
         "pendientes":   0,
         "en_proceso":   0,
         "completados":  0,
+        "caidos":       0,
         "cancelados":   0,    # solo informativo
         "ingreso_completados": 0.0,
         "monto_pendiente":     0.0,  # vuelos pendientes + en_proceso
+        "monto_caido":         0.0,  # vuelos caídos sin completar
     }
     for v in vuelos:
         e = v["estado"]
@@ -46,6 +52,9 @@ def _resumen_vuelos(vuelos: list) -> dict:
         elif e == "en_proceso":
             r["en_proceso"] += 1
             r["monto_pendiente"] += m
+        elif e == "caido":
+            r["caidos"] += 1
+            r["monto_caido"] += m
         elif e == "completado":
             r["completados"] += 1
             r["ingreso_completados"] += m
@@ -173,6 +182,7 @@ async def _render_balance_mes(q, anio: int, mes: int):
         f"*✈️ Vuelos del mes*\n"
         f"  • Creados:        {r['total']}\n"
         f"  • Completados:    {r['completados']}\n"
+        f"  • Caídos:         {r['caidos']} 💥\n"
         f"  • Cancelados:     {r['cancelados']}\n"
         f"  • Pendientes:     {r['pendientes']}\n"
         f"  • En proceso:     {r['en_proceso']}\n"
@@ -182,6 +192,9 @@ async def _render_balance_mes(q, anio: int, mes: int):
         f"  • Ingresos:       *{formato_mxn(ingresos)}*\n"
         f"  • Egresos fondo:  −{formato_mxn(gastos_total)}\n"
         f"  • Ganancia neta:  *{formato_mxn(ganancia_neta)}*\n"
+        f"\n"
+        f"💥 _Atorado en caídos (no cuenta hasta sacarlos):_ "
+        f"{formato_mxn(r['monto_caido'])}\n"
         f"\n"
         f"*👥 Reparto por socio* ({n_socios})\n"
         f"  • Cada uno: *{formato_mxn(parte)}*\n"
@@ -233,6 +246,7 @@ async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         f"*✈️ Actividad*\n"
         f"  • Vuelos creados:  {r['total']}\n"
         f"  • Sacados:          *{r['completados']}* ✅\n"
+        f"  • Caídos:           {r['caidos']} 💥\n"
         f"  • Cancelados:       {r['cancelados']} ❌\n"
         f"  • Pendientes:       {r['pendientes']} ⏳\n"
         f"  • En proceso:       {r['en_proceso']} 🔄\n"
@@ -244,7 +258,8 @@ async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         f"  • Ganancia neta:   *{formato_mxn(ganancia_neta)}*\n"
         f"  • Por socio:        *{formato_mxn(parte)}*\n"
         f"\n"
-        f"💰 _Pendiente por cobrar:_ {formato_mxn(r['monto_pendiente'])}"
+        f"💰 _Pendiente por cobrar:_ {formato_mxn(r['monto_pendiente'])}\n"
+        f"💥 _Atorado en caídos:_   {formato_mxn(r['monto_caido'])}"
     )
 
     kb = InlineKeyboardMarkup([
@@ -292,11 +307,13 @@ def _construir_txt(titulo: str, vuelos: list, gastos: list, resumen: dict, gasto
 
     out.write(f"VUELOS ({resumen['total']}):\n")
     out.write(f"  Completados: {resumen['completados']}\n")
+    out.write(f"  Caidos:      {resumen['caidos']}\n")
     out.write(f"  Cancelados:  {resumen['cancelados']}\n")
     out.write(f"  Pendientes:  {resumen['pendientes']}\n")
     out.write(f"  En proceso:  {resumen['en_proceso']}\n")
     out.write(f"  Ingresos:    ${resumen['ingreso_completados']:,.2f} MXN\n")
     out.write(f"  Pendiente:   ${resumen['monto_pendiente']:,.2f} MXN\n")
+    out.write(f"  Atorado caidos: ${resumen['monto_caido']:,.2f} MXN\n")
     out.write(f"  Egresos fondo: ${gastos_total:,.2f} MXN\n")
     out.write(f"  Ganancia neta: ${resumen['ingreso_completados'] - gastos_total:,.2f} MXN\n\n")
 

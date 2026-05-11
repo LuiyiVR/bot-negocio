@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from config import (
     DB_PATH, INVERSION_INICIAL_DEFAULT, SOCIOS_DEFAULT,
     ESTADO_PENDIENTE, ESTADO_EN_PROCESO,
-    ESTADO_COMPLETADO, ESTADO_CANCELADO,
+    ESTADO_COMPLETADO, ESTADO_CANCELADO, ESTADO_CAIDO,
 )
 
 
@@ -49,7 +49,9 @@ def init_db():
                 fecha_aceptado    TEXT    NOT NULL DEFAULT '',
                 fecha_completado  TEXT    NOT NULL DEFAULT '',
                 fecha_cancelado   TEXT    NOT NULL DEFAULT '',
-                cancelado_por     TEXT    NOT NULL DEFAULT ''
+                cancelado_por     TEXT    NOT NULL DEFAULT '',
+                fecha_caido               TEXT NOT NULL DEFAULT '',
+                foto_confirmacion_file_id TEXT NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_vuelos_estado ON vuelos(estado);
@@ -104,11 +106,20 @@ def init_db():
             (SOCIOS_DEFAULT,),
         )
 
-        # Migración: añadir foto_file_id si la DB es de antes del cambio a captura.
+        # Migraciones: añadir columnas nuevas si la DB es de antes del cambio.
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(vuelos)")}
         if "foto_file_id" not in cols:
             conn.execute(
                 "ALTER TABLE vuelos ADD COLUMN foto_file_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "fecha_caido" not in cols:
+            conn.execute(
+                "ALTER TABLE vuelos ADD COLUMN fecha_caido TEXT NOT NULL DEFAULT ''"
+            )
+        if "foto_confirmacion_file_id" not in cols:
+            conn.execute(
+                "ALTER TABLE vuelos ADD COLUMN foto_confirmacion_file_id "
+                "TEXT NOT NULL DEFAULT ''"
             )
 
 
@@ -245,14 +256,43 @@ def soltar_vuelo(vuelo_id: int, user_id: int) -> dict | None:
         return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
 
 
-def completar_vuelo(vuelo_id: int, user_id: int) -> dict | None:
-    """En proceso → Completado. Solo quien lo tomó."""
+def completar_vuelo(vuelo_id: int, user_id: int,
+                    foto_confirmacion_file_id: str = '') -> dict | None:
+    """En proceso o Caído → Completado. Solo quien lo tomó."""
     with get_conn() as conn:
         cur = conn.execute("""
             UPDATE vuelos
-            SET estado=?, fecha_completado=?
+            SET estado=?, fecha_completado=?, foto_confirmacion_file_id=?
+            WHERE id=? AND estado IN (?, ?) AND aceptado_por_id=?
+        """, (ESTADO_COMPLETADO, _now(), foto_confirmacion_file_id,
+              vuelo_id, ESTADO_EN_PROCESO, ESTADO_CAIDO, user_id))
+        if cur.rowcount == 0:
+            return None
+        return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
+
+
+def marcar_caido(vuelo_id: int, user_id: int) -> dict | None:
+    """En proceso → Caído (queda reservado al tomador). Solo el tomador."""
+    with get_conn() as conn:
+        cur = conn.execute("""
+            UPDATE vuelos
+            SET estado=?, fecha_caido=?
             WHERE id=? AND estado=? AND aceptado_por_id=?
-        """, (ESTADO_COMPLETADO, _now(), vuelo_id, ESTADO_EN_PROCESO, user_id))
+        """, (ESTADO_CAIDO, _now(), vuelo_id, ESTADO_EN_PROCESO, user_id))
+        if cur.rowcount == 0:
+            return None
+        return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
+
+
+def liberar_caido(vuelo_id: int, user_id: int) -> dict | None:
+    """Caído → Pendiente. Solo quien lo tenía reservado."""
+    with get_conn() as conn:
+        cur = conn.execute("""
+            UPDATE vuelos
+            SET estado=?, aceptado_por='', aceptado_por_id=NULL,
+                fecha_aceptado='', fecha_caido=''
+            WHERE id=? AND estado=? AND aceptado_por_id=?
+        """, (ESTADO_PENDIENTE, vuelo_id, ESTADO_CAIDO, user_id))
         if cur.rowcount == 0:
             return None
         return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
@@ -276,7 +316,7 @@ def cancelar_vuelo(vuelo_id: int, user_id: int, nombre: str) -> tuple[dict | Non
             return None, "Este vuelo ya está cancelado."
 
         autorizado = False
-        if estado in (ESTADO_PENDIENTE, ESTADO_EN_PROCESO):
+        if estado in (ESTADO_PENDIENTE, ESTADO_EN_PROCESO, ESTADO_CAIDO):
             autorizado = (row["creado_por_id"] == user_id)
             if not autorizado:
                 return None, "Solo quien creó el vuelo puede cancelarlo en este estado."

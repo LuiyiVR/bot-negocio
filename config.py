@@ -26,6 +26,7 @@ ESTADO_PENDIENTE  = "pendiente"
 ESTADO_EN_PROCESO = "en_proceso"
 ESTADO_COMPLETADO = "completado"
 ESTADO_CANCELADO  = "cancelado"
+ESTADO_CAIDO      = "caido"
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 SEP = "─" * 28

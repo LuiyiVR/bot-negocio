@@ -108,13 +108,13 @@ async def vl_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ST_MENU
 
     # Agrupar por estado
-    por_estado = {"en_proceso": [], "completado": [], "cancelado": []}
+    por_estado = {"en_proceso": [], "caido": [], "completado": [], "cancelado": []}
     for v in vuelos:
         por_estado.setdefault(v["estado"], []).append(v)
 
     lineas = [f"🛫 *Mis Vuelos* ({len(vuelos)})\n─────────────────────────────"]
 
-    for estado in ("en_proceso", "completado", "cancelado"):
+    for estado in ("en_proceso", "caido", "completado", "cancelado"):
         grupo = por_estado.get(estado, [])
         if not grupo:
             continue
@@ -164,6 +164,7 @@ async def vl_ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     kb = InlineKeyboardMarkup(filas)
 
     foto = vuelo["foto_file_id"]
+    foto_conf = vuelo["foto_confirmacion_file_id"]
     if foto:
         # No se puede editar un mensaje de texto a foto: borramos y mandamos nuevo.
         try:
@@ -174,12 +175,25 @@ async def vl_ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             photo=foto,
             caption=fmt_vuelo(vuelo),
             parse_mode="Markdown",
-            reply_markup=kb,
+            reply_markup=kb if not foto_conf else None,
         )
+        if foto_conf:
+            await q.message.chat.send_photo(
+                photo=foto_conf,
+                caption=f"🧾 *Número de confirmación — Vuelo #{vid}*",
+                parse_mode="Markdown",
+                reply_markup=kb,
+            )
     else:
         await q.edit_message_text(
             fmt_vuelo(vuelo),
             parse_mode="Markdown",
             reply_markup=kb,
         )
+        if foto_conf:
+            await q.message.chat.send_photo(
+                photo=foto_conf,
+                caption=f"🧾 *Número de confirmación — Vuelo #{vid}*",
+                parse_mode="Markdown",
+            )
     return ST_MENU

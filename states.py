@@ -9,7 +9,8 @@ ST_VC_COBRADO    = 107
 ST_VC_CONFIRMAR  = 108
 
 # ── Acciones sobre vuelos ────────────────────────────────────────────────────
-ST_VAC_CANCELAR  = 200
+ST_VAC_CANCELAR        = 200
+ST_VAC_COMPLETAR_FOTO  = 201
 
 # ── Fondo de inversión ───────────────────────────────────────────────────────
 ST_FONDO_CONCEPTO    = 300

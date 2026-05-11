@@ -4,7 +4,7 @@ from datetime import datetime
 from currency import formato_mxn
 from config import (
     ESTADO_PENDIENTE, ESTADO_EN_PROCESO,
-    ESTADO_COMPLETADO, ESTADO_CANCELADO,
+    ESTADO_COMPLETADO, ESTADO_CANCELADO, ESTADO_CAIDO,
 )
 
 
@@ -13,6 +13,7 @@ _ICONO_ESTADO = {
     ESTADO_EN_PROCESO: "🔄",
     ESTADO_COMPLETADO: "✅",
     ESTADO_CANCELADO:  "❌",
+    ESTADO_CAIDO:      "💥",
 }
 
 _NOMBRE_ESTADO = {
@@ -20,6 +21,7 @@ _NOMBRE_ESTADO = {
     ESTADO_EN_PROCESO: "En proceso",
     ESTADO_COMPLETADO: "Completado",
     ESTADO_CANCELADO:  "Cancelado",
+    ESTADO_CAIDO:      "Caído",
 }
 
 
@@ -93,6 +95,9 @@ def fmt_vuelo(v, *, breve: bool = False, mostrar_pasajeros: bool = True) -> str:
 
     if g("foto_file_id"):
         lineas.append("📷 _Captura adjunta_")
+
+    if g("foto_confirmacion_file_id"):
+        lineas.append("🧾 _Confirmación adjunta_")
 
     if not breve and mostrar_pasajeros:
         if g("pasajeros"):
