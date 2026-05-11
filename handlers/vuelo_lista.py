@@ -148,14 +148,39 @@ async def vl_ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         return ST_MENU
 
     user_id = update.effective_user.id
+    es_sacado = vuelo["estado"] == "completado"
     filas = kb_acciones_vuelo(vuelo, user_id)
-    volver_cb = "vl_sacados" if vuelo["estado"] == "completado" else "vl_pendientes"
+    volver_cb = "vl_sacados" if es_sacado else "vl_pendientes"
     filas.append([InlineKeyboardButton("⬅️  Volver",         callback_data=volver_cb)])
     filas.append([InlineKeyboardButton("🏠  Menú Principal", callback_data="menu")])
     kb = InlineKeyboardMarkup(filas)
 
     foto = vuelo["foto_file_id"]
     foto_conf = vuelo["foto_confirmacion_file_id"]
+
+    # Vista "Vuelos Sacados": mostrar solo la captura de confirmación y
+    # ocultar quién dio de alta el vuelo (sólo importa quién lo sacó).
+    if es_sacado:
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        caption = fmt_vuelo(vuelo, mostrar_creador=False)
+        if foto_conf:
+            await q.message.chat.send_photo(
+                photo=foto_conf,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=kb,
+            )
+        else:
+            await q.message.chat.send_message(
+                caption + "\n\n_⚠️ Sin captura de confirmación._",
+                parse_mode="Markdown",
+                reply_markup=kb,
+            )
+        return ST_MENU
+
     if foto:
         # No se puede editar un mensaje de texto a foto: borramos y mandamos nuevo.
         try:

@@ -66,7 +66,8 @@ def _g(v):
     return lambda k: getattr(v, k, "")
 
 
-def fmt_vuelo(v, *, breve: bool = False, mostrar_pasajeros: bool = True) -> str:
+def fmt_vuelo(v, *, breve: bool = False, mostrar_pasajeros: bool = True,
+              mostrar_creador: bool = True) -> str:
     """Tarjeta de vuelo formateada (acepta sqlite3.Row o dict).
 
     Soporta vuelos nuevos (foto+pasajeros+monto) y los viejos (con aerolínea/ruta).
@@ -107,7 +108,8 @@ def fmt_vuelo(v, *, breve: bool = False, mostrar_pasajeros: bool = True) -> str:
             lineas.append(f"📝 _{safe(extras)}_")
 
     lineas.append(f"💰 *{formato_mxn(g('monto_cobrado'))}*")
-    lineas.append(f"👤 Alta: {safe(g('creado_por'))}")
+    if mostrar_creador:
+        lineas.append(f"👤 Alta: {safe(g('creado_por'))}")
 
     if g("aceptado_por"):
         lineas.append(f"🎯 Tomado: {safe(g('aceptado_por'))}")
