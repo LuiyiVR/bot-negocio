@@ -97,6 +97,8 @@ def kb_acciones_vuelo(vuelo, user_id: int):
 
     elif estado == "completado":
         if tomador == user_id:
+            filas.append([InlineKeyboardButton(f"💥  Vuelo caído (#{vid})",
+                                               callback_data=f"vac_caido:{vid}")])
             filas.append([InlineKeyboardButton(f"❌  Cancelar (#{vid})",
                                                callback_data=f"vac_cancelar:{vid}")])
 

@@ -272,13 +272,18 @@ def completar_vuelo(vuelo_id: int, user_id: int,
 
 
 def marcar_caido(vuelo_id: int, user_id: int) -> dict | None:
-    """En proceso → Caído (queda reservado al tomador). Solo el tomador."""
+    """En proceso o Completado → Caído (queda reservado al tomador).
+    Solo el tomador. Si venía de completado, se limpian fecha_completado y la
+    captura de confirmación: el monto deja de contar como ingreso hasta que
+    se vuelva a completar."""
     with get_conn() as conn:
         cur = conn.execute("""
             UPDATE vuelos
-            SET estado=?, fecha_caido=?
-            WHERE id=? AND estado=? AND aceptado_por_id=?
-        """, (ESTADO_CAIDO, _now(), vuelo_id, ESTADO_EN_PROCESO, user_id))
+            SET estado=?, fecha_caido=?,
+                fecha_completado='', foto_confirmacion_file_id=''
+            WHERE id=? AND estado IN (?, ?) AND aceptado_por_id=?
+        """, (ESTADO_CAIDO, _now(),
+              vuelo_id, ESTADO_EN_PROCESO, ESTADO_COMPLETADO, user_id))
         if cur.rowcount == 0:
             return None
         return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
@@ -293,6 +298,22 @@ def liberar_caido(vuelo_id: int, user_id: int) -> dict | None:
                 fecha_aceptado='', fecha_caido=''
             WHERE id=? AND estado=? AND aceptado_por_id=?
         """, (ESTADO_PENDIENTE, vuelo_id, ESTADO_CAIDO, user_id))
+        if cur.rowcount == 0:
+            return None
+        return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
+
+
+def soltar_completado(vuelo_id: int, user_id: int) -> dict | None:
+    """Completado → Pendiente. Solo quien lo había sacado. Borra toda la
+    info de tomado/completado (la captura de confirmación también)."""
+    with get_conn() as conn:
+        cur = conn.execute("""
+            UPDATE vuelos
+            SET estado=?, aceptado_por='', aceptado_por_id=NULL,
+                fecha_aceptado='', fecha_completado='',
+                foto_confirmacion_file_id='', fecha_caido=''
+            WHERE id=? AND estado=? AND aceptado_por_id=?
+        """, (ESTADO_PENDIENTE, vuelo_id, ESTADO_COMPLETADO, user_id))
         if cur.rowcount == 0:
             return None
         return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())

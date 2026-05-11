@@ -3,7 +3,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 import db
-from config import ESTADO_EN_PROCESO, ESTADO_CAIDO
+from config import ESTADO_EN_PROCESO, ESTADO_CAIDO, ESTADO_COMPLETADO
 from formatters import safe, fmt_vuelo, nombre_usuario
 from currency import formato_mxn
 from notifications import notificar_otros, notificar_otros_foto
@@ -292,9 +292,10 @@ async def vac_caido_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
         await edit_q(q, "❌ Vuelo no encontrado.", reply_markup=kb_volver())
         return ST_MENU
 
-    if vuelo["estado"] != ESTADO_EN_PROCESO:
+    if vuelo["estado"] not in (ESTADO_EN_PROCESO, ESTADO_COMPLETADO):
         await edit_q(q,
-            f"⚠️ El vuelo *#{vid}* no está en proceso (estado: _{vuelo['estado']}_).",
+            f"⚠️ El vuelo *#{vid}* no se puede marcar como caído en su estado "
+            f"actual (_{vuelo['estado']}_).",
             parse_mode="Markdown", reply_markup=kb_volver(),
         )
         return ST_MENU
@@ -306,6 +307,14 @@ async def vac_caido_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
         )
         return ST_MENU
 
+    aviso_extra = ""
+    if vuelo["estado"] == ESTADO_COMPLETADO:
+        aviso_extra = (
+            "\n\n⚠️ _Este vuelo ya estaba completado. Al marcarlo como caído "
+            "su ingreso *dejará de contar* en la ganancia y se borrará la "
+            "captura del número de confirmación._"
+        )
+
     await edit_q(q,
         f"💥 *Vuelo #{vid} caído*\n"
         "─────────────────────────────\n"
@@ -315,7 +324,8 @@ async def vac_caido_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
         "🔓 *Liberar para todos* — vuelve a quedar disponible como pendiente.\n\n"
         "📌 *Mantener para mí* — sigue reservado a tu nombre para que lo "
         "vuelvas a intentar. Su monto *no se contará* como ganancia hasta "
-        "que confirmes que lo sacaste.",
+        "que confirmes que lo sacaste."
+        f"{aviso_extra}",
         parse_mode="Markdown",
         reply_markup=kb_caido_opciones(vid),
     )
@@ -337,8 +347,10 @@ async def vac_caido_soltar(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
 
     vuelo = await db_thread(db.soltar_vuelo, vid, tg_user.id)
     if not vuelo:
-        # Pudo haber pasado a caido vía otra ruta — intentar liberar caído.
+        # Pudo haber pasado a caido o estar completado — intentar las otras rutas.
         vuelo = await db_thread(db.liberar_caido, vid, tg_user.id)
+    if not vuelo:
+        vuelo = await db_thread(db.soltar_completado, vid, tg_user.id)
 
     if not vuelo:
         await edit_q(q,
