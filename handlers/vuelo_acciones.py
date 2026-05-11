@@ -14,6 +14,7 @@ from utils import (
 from keyboards import (
     kb_volver, kb_cancelar, kb_confirmar_cancelar,
     kb_acciones_vuelo, kb_aceptar_vuelo, kb_caido_opciones,
+    kb_duracion_sacado,
 )
 from states import ST_MENU, ST_VAC_COMPLETAR_FOTO
 
@@ -247,7 +248,7 @@ async def vac_completar_foto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         photo=foto_file_id, caption=caption, parse_mode="Markdown",
     )
 
-    # Editar el panel del bot con el resultado.
+    # Editar el panel del bot con el resultado + pregunta de expiración.
     last = ctx.user_data.get("_last_msg")
     texto = (
         "✅ *Vuelo completado*\n"
@@ -255,21 +256,66 @@ async def vac_completar_foto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
         f"{fmt_vuelo(vuelo)}\n"
         "─────────────────────────────\n"
         f"💵 Ingreso registrado: *{formato_mxn(vuelo['monto_cobrado'])}*\n"
-        "🧾 Captura del número de confirmación enviada a los socios."
+        "🧾 Captura del número de confirmación enviada a los socios.\n\n"
+        "🗑 *¿En cuánto tiempo quieres que se quite de* 🎫 *Vuelos Sacados?*"
     )
+    kb = kb_duracion_sacado(vid)
     if last:
         try:
             await update.get_bot().edit_message_text(
                 chat_id=last[0], message_id=last[1],
                 text=texto, parse_mode="Markdown",
-                reply_markup=kb_volver(),
+                reply_markup=kb,
             )
             return ST_MENU
         except Exception:
             pass
 
     await update.effective_chat.send_message(
-        texto, parse_mode="Markdown", reply_markup=kb_volver(),
+        texto, parse_mode="Markdown", reply_markup=kb,
+    )
+    return ST_MENU
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  EXPIRACIÓN DE VUELOS SACADOS (cuánto tiempo se ven en la lista)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def vac_expira_sacado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+
+    q = update.callback_query
+    await q.answer()
+    try:
+        _, vid_s, horas_s = q.data.split(":")
+        vid, horas = int(vid_s), int(horas_s)
+    except (ValueError, IndexError):
+        await edit_q(q, "❌ Opción inválida.", reply_markup=kb_volver())
+        return ST_MENU
+
+    tg_user = update.effective_user
+    vuelo = await db_thread(db.set_expiracion_sacado, vid, tg_user.id, horas)
+    if not vuelo:
+        await edit_q(q,
+            f"⚠️ No se pudo configurar la expiración del vuelo *#{vid}* "
+            f"(no es tuyo o ya no está completado).",
+            parse_mode="Markdown", reply_markup=kb_volver(),
+        )
+        return ST_MENU
+
+    if horas % 24 == 0 and horas >= 24:
+        legible = f"{horas // 24} día{'s' if horas != 24 else ''}"
+    else:
+        legible = f"{horas} hora{'s' if horas != 1 else ''}"
+
+    await edit_q(q,
+        f"🗑 *Vuelo #{vid}*\n\n"
+        f"Se quitará automáticamente de 🎫 *Vuelos Sacados* en *{legible}* "
+        f"(el {vuelo['fecha_expira_sacado'][:16]}).",
+        parse_mode="Markdown",
+        reply_markup=kb_volver(),
     )
     return ST_MENU
 

@@ -51,7 +51,8 @@ def init_db():
                 fecha_cancelado   TEXT    NOT NULL DEFAULT '',
                 cancelado_por     TEXT    NOT NULL DEFAULT '',
                 fecha_caido               TEXT NOT NULL DEFAULT '',
-                foto_confirmacion_file_id TEXT NOT NULL DEFAULT ''
+                foto_confirmacion_file_id TEXT NOT NULL DEFAULT '',
+                fecha_expira_sacado       TEXT NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_vuelos_estado ON vuelos(estado);
@@ -121,6 +122,11 @@ def init_db():
                 "ALTER TABLE vuelos ADD COLUMN foto_confirmacion_file_id "
                 "TEXT NOT NULL DEFAULT ''"
             )
+        if "fecha_expira_sacado" not in cols:
+            conn.execute(
+                "ALTER TABLE vuelos ADD COLUMN fecha_expira_sacado "
+                "TEXT NOT NULL DEFAULT ''"
+            )
 
 
 def _now() -> str:
@@ -166,14 +172,33 @@ def vuelos_pendientes() -> list:
 
 def vuelos_sacados() -> list:
     """Vuelos completados ('sacados'), visibles para todos los socios.
-    Se ordenan por fecha en que se completaron (más recientes primero)."""
+    Se excluyen los que ya pasaron su fecha de expiración elegida por quien
+    sacó el vuelo. Se ordenan por fecha de completado (más recientes primero)."""
+    ahora = _now()
     with get_conn() as conn:
         return conn.execute(
             """SELECT * FROM vuelos
                WHERE estado=?
+                 AND (fecha_expira_sacado = '' OR fecha_expira_sacado > ?)
                ORDER BY COALESCE(NULLIF(fecha_completado,''), fecha_creacion) DESC""",
-            (ESTADO_COMPLETADO,),
+            (ESTADO_COMPLETADO, ahora),
         ).fetchall()
+
+
+def set_expiracion_sacado(vuelo_id: int, user_id: int, horas: int) -> dict | None:
+    """Define cuándo el vuelo sacado deja de mostrarse en la lista.
+    Solo el tomador del vuelo puede definirlo; el vuelo debe estar completado."""
+    fecha = (datetime.now() + timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE vuelos
+               SET fecha_expira_sacado=?
+               WHERE id=? AND estado=? AND aceptado_por_id=?""",
+            (fecha, vuelo_id, ESTADO_COMPLETADO, user_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
 
 
 def vuelos_de_usuario(user_id: int, estados: list[str] | None = None) -> list:

@@ -120,6 +120,22 @@ def kb_confirmar_cancelar(vuelo_id: int):
     ])
 
 
+def kb_duracion_sacado(vuelo_id: int):
+    """Opciones que se le presentan al usuario al sacar un vuelo para elegir
+    cuánto tiempo permanece visible en 'Vuelos Sacados'."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🗑  24 horas", callback_data=f"vac_expira:{vuelo_id}:24"),
+            InlineKeyboardButton("🗑  3 días",   callback_data=f"vac_expira:{vuelo_id}:72"),
+        ],
+        [
+            InlineKeyboardButton("🗑  7 días",   callback_data=f"vac_expira:{vuelo_id}:168"),
+            InlineKeyboardButton("🗑  30 días",  callback_data=f"vac_expira:{vuelo_id}:720"),
+        ],
+        [InlineKeyboardButton("🏠  Menú Principal", callback_data="menu")],
+    ])
+
+
 def kb_caido_opciones(vuelo_id: int):
     """Pregunta qué hacer cuando se marca un vuelo como caído."""
     return InlineKeyboardMarkup([
