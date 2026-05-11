@@ -170,6 +170,28 @@ def vuelos_pendientes() -> list:
         ).fetchall()
 
 
+def vuelos_pendientes_y_mios(user_id: int) -> list:
+    """Pendientes (de todos) + los que `user_id` tiene tomados en proceso o caídos.
+    Resultado ordenado: primero los del usuario (en_proceso → caido),
+    luego los pendientes globales, dentro de cada grupo por fecha desc."""
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM vuelos
+               WHERE estado=?
+                  OR (estado IN (?, ?) AND aceptado_por_id=?)
+               ORDER BY
+                   CASE estado
+                       WHEN ? THEN 0
+                       WHEN ? THEN 1
+                       WHEN ? THEN 2
+                       ELSE 9
+                   END,
+                   fecha_creacion DESC""",
+            (ESTADO_PENDIENTE, ESTADO_EN_PROCESO, ESTADO_CAIDO, user_id,
+             ESTADO_EN_PROCESO, ESTADO_CAIDO, ESTADO_PENDIENTE),
+        ).fetchall()
+
+
 def vuelos_sacados() -> list:
     """Vuelos completados ('sacados'), visibles para todos los socios.
     Se excluyen los que ya pasaron su fecha de expiración elegida por quien

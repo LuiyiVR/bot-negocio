@@ -41,6 +41,24 @@ def _build_kb_lista(vuelos, user_id: int):
 #  PENDIENTES
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _linea_vuelo_pend(v) -> str:
+    aero = v["aerolinea"] or ""
+    ori  = v["origen"]    or ""
+    des  = v["destino"]   or ""
+    fv   = v["fecha_vuelo"] or ""
+    hr   = v["horario"]   or ""
+    ruta_linea = ""
+    if aero or ori or des:
+        ruta_linea = f"\n   ✈️ {safe(aero)}  ·  {safe(ori)} → {safe(des)}"
+    if fv or hr:
+        ruta_linea += f"\n   📅 {safe(fv)}   🕐 {safe(hr)}"
+    adjunto = "  📷" if v["foto_file_id"] else ""
+    return (
+        f"*#{v['id']}*{adjunto}{ruta_linea}\n"
+        f"   💰 *{formato_mxn(v['monto_cobrado'])}*  👤 {safe(v['creado_por'])}"
+    )
+
+
 async def vl_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not autorizado(update):
         await rechazar(update)
@@ -49,36 +67,33 @@ async def vl_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
 
-    vuelos = await db_thread(db.vuelos_pendientes)
+    user_id = update.effective_user.id
+    vuelos = await db_thread(db.vuelos_pendientes_y_mios, user_id)
     if not vuelos:
         await edit_to_text(q,
-            "⏳ *Pendientes*\n\n_No hay vuelos pendientes en este momento._",
+            "⏳ *Pendientes*\n\n_No hay vuelos pendientes ni tomados por ti._",
             parse_mode="Markdown", reply_markup=kb_volver(),
         )
         return ST_MENU
 
-    user_id = update.effective_user.id
+    mios = [v for v in vuelos if v["estado"] != "pendiente"]
+    pend = [v for v in vuelos if v["estado"] == "pendiente"]
 
-    lineas = [f"⏳ *Pendientes* ({len(vuelos)})\n─────────────────────────────"]
-    for v in vuelos:
-        aero = v["aerolinea"] or ""
-        ori  = v["origen"]    or ""
-        des  = v["destino"]   or ""
-        fv   = v["fecha_vuelo"] or ""
-        hr   = v["horario"]   or ""
-        ruta_linea = ""
-        if aero or ori or des:
-            ruta_linea = f"\n   ✈️ {safe(aero)}  ·  {safe(ori)} → {safe(des)}"
-        if fv or hr:
-            ruta_linea += f"\n   📅 {safe(fv)}   🕐 {safe(hr)}"
-        adjunto = "  📷" if v["foto_file_id"] else ""
-        lineas.append(
-            f"*#{v['id']}*{adjunto}{ruta_linea}\n"
-            f"   💰 *{formato_mxn(v['monto_cobrado'])}*  👤 {safe(v['creado_por'])}"
-        )
+    bloques = []
+    if mios:
+        sec = [f"🔄 *Tuyos en proceso* ({len(mios)})\n─────────────────────────────"]
+        for v in mios:
+            sec.append(f"{icono_estado(v['estado'])}  {_linea_vuelo_pend(v)}")
+        bloques.append("\n\n".join(sec))
+
+    if pend:
+        sec = [f"⏳ *Pendientes* ({len(pend)})\n─────────────────────────────"]
+        for v in pend:
+            sec.append(_linea_vuelo_pend(v))
+        bloques.append("\n\n".join(sec))
 
     await edit_to_text(q,
-        "\n\n".join(lineas),
+        "\n\n\n".join(bloques),
         parse_mode="Markdown",
         reply_markup=_build_kb_lista(vuelos, user_id),
     )
