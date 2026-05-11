@@ -278,6 +278,39 @@ async def vac_completar_foto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+#  VOLADO (quita el vuelo de la lista, sin tocar la contabilidad)
+# ═════════════════════════════════════════════════════════════════════════════
+
+async def vac_volado(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+
+    q = update.callback_query
+    await q.answer()
+    vid = int(q.data.split(":")[1])
+
+    tg_user = update.effective_user
+    vuelo = await db_thread(db.marcar_volado, vid, tg_user.id)
+    if not vuelo:
+        await edit_q(q,
+            f"⚠️ No puedes marcar como volado el vuelo *#{vid}* "
+            f"(no es tuyo o ya no está completado).",
+            parse_mode="Markdown", reply_markup=kb_volver(),
+        )
+        return ST_MENU
+
+    await edit_q(q,
+        f"✈️ *Vuelo #{vid} marcado como volado*\n\n"
+        f"_Se quitó de_ 🎫 *Vuelos Sacados*. _El ingreso de "
+        f"{formato_mxn(vuelo['monto_cobrado'])} sigue contando en las ganancias._",
+        parse_mode="Markdown",
+        reply_markup=kb_volver(),
+    )
+    return ST_MENU
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 #  EXPIRACIÓN DE VUELOS SACADOS (cuánto tiempo se ven en la lista)
 # ═════════════════════════════════════════════════════════════════════════════
 

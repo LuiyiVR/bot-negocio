@@ -32,7 +32,7 @@ from handlers.vuelo_acciones import (
     vac_tomar, vac_soltar, vac_completar, vac_completar_foto,
     vac_cancelar_inicio, vac_cancelar_ok,
     vac_caido_inicio, vac_caido_soltar, vac_caido_mantener, vac_caido_liberar,
-    vac_expira_sacado,
+    vac_volado, vac_expira_sacado,
 )
 from handlers.vuelo_lista import vl_pendientes, vl_sacados, vl_ver
 from handlers.reportes import (
@@ -151,6 +151,7 @@ def _menu_callbacks():
         CallbackQueryHandler(vac_caido_soltar,     pattern=r"^vac_caido_soltar:\d+$"),
         CallbackQueryHandler(vac_caido_mantener,   pattern=r"^vac_caido_mantener:\d+$"),
         CallbackQueryHandler(vac_caido_liberar,    pattern=r"^vac_caido_liberar:\d+$"),
+        CallbackQueryHandler(vac_volado,           pattern=r"^vac_volado:\d+$"),
         CallbackQueryHandler(vac_expira_sacado,    pattern=r"^vac_expira:\d+:\d+$"),
 
         # Reportes
@@ -215,6 +216,7 @@ def main():
             CallbackQueryHandler(vac_caido_soltar,    pattern=r"^vac_caido_soltar:\d+$"),
             CallbackQueryHandler(vac_caido_mantener,  pattern=r"^vac_caido_mantener:\d+$"),
             CallbackQueryHandler(vac_caido_liberar,   pattern=r"^vac_caido_liberar:\d+$"),
+            CallbackQueryHandler(vac_volado,          pattern=r"^vac_volado:\d+$"),
         ],
         states={
             ST_MENU: _menu_callbacks(),

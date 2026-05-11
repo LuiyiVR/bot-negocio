@@ -185,6 +185,23 @@ def vuelos_sacados() -> list:
         ).fetchall()
 
 
+def marcar_volado(vuelo_id: int, user_id: int) -> dict | None:
+    """El tomador marca un vuelo completado como 'volado': desaparece de la
+    lista de Vuelos Sacados pero el estado y el monto se preservan para
+    contabilidad. Se logra forzando fecha_expira_sacado a una fecha pasada."""
+    pasado = "1970-01-01 00:00:00"
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE vuelos
+               SET fecha_expira_sacado=?
+               WHERE id=? AND estado=? AND aceptado_por_id=?""",
+            (pasado, vuelo_id, ESTADO_COMPLETADO, user_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        return dict(conn.execute("SELECT * FROM vuelos WHERE id=?", (vuelo_id,)).fetchone())
+
+
 def set_expiracion_sacado(vuelo_id: int, user_id: int, horas: int) -> dict | None:
     """Define cuándo el vuelo sacado deja de mostrarse en la lista.
     Solo el tomador del vuelo puede definirlo; el vuelo debe estar completado."""
