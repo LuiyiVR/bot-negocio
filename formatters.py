@@ -43,6 +43,32 @@ def nombre_estado(estado: str) -> str:
     return _NOMBRE_ESTADO.get(estado, estado.capitalize())
 
 
+def tiempo_relativo(iso: str) -> str:
+    """'2026-05-10 12:00:00' → 'hace 3h', 'hace 2d', etc."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.strptime(iso, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return ""
+    seg = int((datetime.now() - dt).total_seconds())
+    if seg < 0:
+        return "ahora"
+    if seg < 60:
+        return "hace segundos"
+    minutos = seg // 60
+    if minutos < 60:
+        return f"hace {minutos} min"
+    horas = minutos // 60
+    if horas < 24:
+        return f"hace {horas}h"
+    dias = horas // 24
+    if dias < 30:
+        return f"hace {dias}d"
+    meses = dias // 30
+    return f"hace {meses} mes" + ("es" if meses != 1 else "")
+
+
 def fmt_fecha_corta(iso: str) -> str:
     """'2026-05-07 12:34:56' → '07/05/2026'"""
     if not iso:

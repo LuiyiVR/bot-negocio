@@ -129,8 +129,12 @@ def kb_duracion_sacado(vuelo_id: int):
             InlineKeyboardButton("🗑  3 días",   callback_data=f"vac_expira:{vuelo_id}:72"),
         ],
         [
+            InlineKeyboardButton("🗑  5 días",   callback_data=f"vac_expira:{vuelo_id}:120"),
             InlineKeyboardButton("🗑  7 días",   callback_data=f"vac_expira:{vuelo_id}:168"),
-            InlineKeyboardButton("🗑  30 días",  callback_data=f"vac_expira:{vuelo_id}:720"),
+        ],
+        [
+            InlineKeyboardButton("🗑  8 días",   callback_data=f"vac_expira:{vuelo_id}:192"),
+            InlineKeyboardButton("🗑  14 días",  callback_data=f"vac_expira:{vuelo_id}:336"),
         ],
         [InlineKeyboardButton("🏠  Menú Principal", callback_data="menu")],
     ])

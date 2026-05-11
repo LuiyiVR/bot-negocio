@@ -3,7 +3,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 import db
-from formatters import safe, fmt_vuelo, icono_estado
+from formatters import safe, fmt_vuelo, icono_estado, tiempo_relativo
 from currency import formato_mxn
 from utils import autorizado, rechazar, db_thread, edit_to_text
 from keyboards import kb_volver, kb_acciones_vuelo
@@ -116,9 +116,11 @@ async def vl_sacados(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         if aero or ori or des:
             ruta_linea = f"\n   ✈️ {safe(aero)}  ·  {safe(ori)} → {safe(des)}"
         comprobante = "  🧾" if v["foto_confirmacion_file_id"] else ""
+        hace = tiempo_relativo(v["fecha_completado"])
+        hace_txt = f"  ⏱ {hace}" if hace else ""
         lineas.append(
             f"*#{v['id']}*{comprobante}{ruta_linea}\n"
-            f"   💰 *{formato_mxn(v['monto_cobrado'])}*  🎯 {safe(v['aceptado_por'])}"
+            f"   💰 *{formato_mxn(v['monto_cobrado'])}*  🎯 {safe(v['aceptado_por'])}{hace_txt}"
         )
 
     await edit_to_text(q,
