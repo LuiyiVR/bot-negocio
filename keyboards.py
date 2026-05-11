@@ -11,7 +11,7 @@ def kb_menu():
         [InlineKeyboardButton("✈️  Nuevo Vuelo",          callback_data="vc_inicio")],
         [
             InlineKeyboardButton("📋  Pendientes",         callback_data="vl_pendientes"),
-            InlineKeyboardButton("🛫  Mis Vuelos",         callback_data="vl_mios"),
+            InlineKeyboardButton("🎫  Vuelos Sacados",     callback_data="vl_sacados"),
         ],
         [
             InlineKeyboardButton("📅  Balance del Mes",    callback_data="rep_mes"),

@@ -18,6 +18,9 @@ from telegram.ext import (
 
 import db
 from config import BOT_TOKEN, ALLOWED_IDS
+from formatters import safe
+from currency import formato_mxn
+from notifications import notificar_a
 
 # ── Handlers ─────────────────────────────────────────────────────────────────
 from handlers.menu import mostrar_menu
@@ -30,7 +33,7 @@ from handlers.vuelo_acciones import (
     vac_cancelar_inicio, vac_cancelar_ok,
     vac_caido_inicio, vac_caido_soltar, vac_caido_mantener, vac_caido_liberar,
 )
-from handlers.vuelo_lista import vl_pendientes, vl_mios, vl_ver
+from handlers.vuelo_lista import vl_pendientes, vl_sacados, vl_ver
 from handlers.reportes import (
     rep_mes, rep_otro_mes_inicio, rep_otro_mes_texto,
     rep_semana, rep_dl_mes, rep_dl_semana,
@@ -72,6 +75,43 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+HORAS_CAIDO_MAX = 12          # tras 12h en caído sin confirmar, se cancela
+INTERVALO_CHECK_CAIDOS = 600  # revisar cada 10 minutos
+
+
+async def _revisar_caidos_vencidos(bot):
+    """Cancela vuelos con +12h en caído y notifica a todos los socios."""
+    cancelados = await asyncio.to_thread(db.auto_cancelar_caidos, HORAS_CAIDO_MAX)
+    for v in cancelados:
+        aviso = (
+            f"⏱ *Vuelo #{v['id']} cancelado automáticamente*\n\n"
+            f"Llevaba más de {HORAS_CAIDO_MAX}h en caído sin confirmar.\n"
+            f"🎯 Lo tenía: *{safe(v['aceptado_por'])}*\n"
+            f"💰 {formato_mxn(v['monto_cobrado'])}"
+        )
+        try:
+            await notificar_a(bot, ALLOWED_IDS, aviso, parse_mode="Markdown")
+        except Exception:
+            logger.exception("No se pudo notificar la cancelación auto del vuelo #%s", v["id"])
+
+
+async def _loop_caidos(app):
+    """Loop infinito que revisa vuelos caídos vencidos periódicamente."""
+    while True:
+        try:
+            await _revisar_caidos_vencidos(app.bot)
+        except Exception:
+            logger.exception("Error en _revisar_caidos_vencidos")
+        await asyncio.sleep(INTERVALO_CHECK_CAIDOS)
+
+
+async def _post_init(app):
+    """Lanza tareas de fondo después de iniciar la aplicación."""
+    asyncio.create_task(_loop_caidos(app))
+    logger.info("✅ Loop de auto-cancelación de caídos iniciado (cada %ss, umbral %sh)",
+                INTERVALO_CHECK_CAIDOS, HORAS_CAIDO_MAX)
+
+
 async def on_error(update, ctx):
     """Loggea cualquier excepción no atrapada y avisa al usuario."""
     logger.exception("Excepción no atrapada: %s", ctx.error)
@@ -99,7 +139,7 @@ def _menu_callbacks():
         # Vuelos
         CallbackQueryHandler(vc_inicio,            pattern=r"^vc_inicio$"),
         CallbackQueryHandler(vl_pendientes,        pattern=r"^vl_pendientes$"),
-        CallbackQueryHandler(vl_mios,              pattern=r"^vl_mios$"),
+        CallbackQueryHandler(vl_sacados,           pattern=r"^vl_sacados$"),
         CallbackQueryHandler(vl_ver,               pattern=r"^vl_ver:\d+$"),
         CallbackQueryHandler(vac_tomar,            pattern=r"^vac_tomar:\d+$"),
         CallbackQueryHandler(vac_soltar,           pattern=r"^vac_soltar:\d+$"),
@@ -157,7 +197,7 @@ def main():
     logger.info("✅ DB inicializada")
     logger.info("✅ IDs autorizados: %s", ALLOWED_IDS)
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     conv = ConversationHandler(
         entry_points=[

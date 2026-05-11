@@ -164,6 +164,18 @@ def vuelos_pendientes() -> list:
         ).fetchall()
 
 
+def vuelos_sacados() -> list:
+    """Vuelos completados ('sacados'), visibles para todos los socios.
+    Se ordenan por fecha en que se completaron (más recientes primero)."""
+    with get_conn() as conn:
+        return conn.execute(
+            """SELECT * FROM vuelos
+               WHERE estado=?
+               ORDER BY COALESCE(NULLIF(fecha_completado,''), fecha_creacion) DESC""",
+            (ESTADO_COMPLETADO,),
+        ).fetchall()
+
+
 def vuelos_de_usuario(user_id: int, estados: list[str] | None = None) -> list:
     with get_conn() as conn:
         if estados:
@@ -359,6 +371,29 @@ def delete_vuelo(vuelo_id: int):
     """Borra permanentemente. Uso administrativo."""
     with get_conn() as conn:
         conn.execute("DELETE FROM vuelos WHERE id=?", (vuelo_id,))
+
+
+def auto_cancelar_caidos(horas: int = 12) -> list:
+    """Cancela automáticamente vuelos en estado 'caido' por más de `horas`.
+    Devuelve la lista de vuelos cancelados (con sus datos antes del cambio)."""
+    limite = (datetime.now() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM vuelos
+               WHERE estado=? AND fecha_caido != '' AND fecha_caido < ?""",
+            (ESTADO_CAIDO, limite),
+        ).fetchall()
+        if not rows:
+            return []
+        ids = [r["id"] for r in rows]
+        placeholders = ",".join("?" * len(ids))
+        conn.execute(
+            f"""UPDATE vuelos
+                SET estado=?, fecha_cancelado=?, cancelado_por=?
+                WHERE id IN ({placeholders})""",
+            (ESTADO_CANCELADO, _now(), "Sistema (12h en caído)", *ids),
+        )
+        return [dict(r) for r in rows]
 
 
 # ═════════════════════════════════════════════════════════════════════════════

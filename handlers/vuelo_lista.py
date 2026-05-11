@@ -1,9 +1,9 @@
-"""Listas de vuelos: pendientes, mis vuelos."""
+"""Listas de vuelos: pendientes y vuelos sacados."""
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 import db
-from formatters import safe, fmt_vuelo, icono_estado, nombre_estado
+from formatters import safe, fmt_vuelo, icono_estado
 from currency import formato_mxn
 from utils import autorizado, rechazar, db_thread, edit_to_text
 from keyboards import kb_volver, kb_acciones_vuelo
@@ -86,10 +86,10 @@ async def vl_pendientes(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-#  MIS VUELOS (los que yo tomé/saqué)
+#  VUELOS SACADOS (completados — visibles para todos los socios)
 # ═════════════════════════════════════════════════════════════════════════════
 
-async def vl_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+async def vl_sacados(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     if not autorizado(update):
         await rechazar(update)
         return ConversationHandler.END
@@ -97,42 +97,32 @@ async def vl_mios(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer()
 
-    user_id = update.effective_user.id
-    vuelos = await db_thread(db.vuelos_de_usuario, user_id)
-
+    vuelos = await db_thread(db.vuelos_sacados)
     if not vuelos:
         await edit_to_text(q,
-            "🛫 *Mis Vuelos*\n\n_Aún no has tomado ningún vuelo._",
+            "🎫 *Vuelos Sacados*\n\n_Aún no hay vuelos completados._",
             parse_mode="Markdown", reply_markup=kb_volver(),
         )
         return ST_MENU
 
-    # Agrupar por estado
-    por_estado = {"en_proceso": [], "caido": [], "completado": [], "cancelado": []}
+    user_id = update.effective_user.id
+
+    lineas = [f"🎫 *Vuelos Sacados* ({len(vuelos)})\n─────────────────────────────"]
     for v in vuelos:
-        por_estado.setdefault(v["estado"], []).append(v)
-
-    lineas = [f"🛫 *Mis Vuelos* ({len(vuelos)})\n─────────────────────────────"]
-
-    for estado in ("en_proceso", "caido", "completado", "cancelado"):
-        grupo = por_estado.get(estado, [])
-        if not grupo:
-            continue
-        lineas.append(f"\n*{icono_estado(estado)} {nombre_estado(estado)}* ({len(grupo)})")
-        for v in grupo:
-            aero = v["aerolinea"] or ""
-            ori  = v["origen"]    or ""
-            des  = v["destino"]   or ""
-            ruta = ""
-            if aero or ori or des:
-                ruta = f"✈️ {safe(aero)}  ·  {safe(ori)} → {safe(des)}  ·  "
-            adjunto = "📷  " if v["foto_file_id"] else ""
-            lineas.append(
-                f"  *#{v['id']}* {adjunto}{ruta}*{formato_mxn(v['monto_cobrado'])}*"
-            )
+        aero = v["aerolinea"] or ""
+        ori  = v["origen"]    or ""
+        des  = v["destino"]   or ""
+        ruta_linea = ""
+        if aero or ori or des:
+            ruta_linea = f"\n   ✈️ {safe(aero)}  ·  {safe(ori)} → {safe(des)}"
+        comprobante = "  🧾" if v["foto_confirmacion_file_id"] else ""
+        lineas.append(
+            f"*#{v['id']}*{comprobante}{ruta_linea}\n"
+            f"   💰 *{formato_mxn(v['monto_cobrado'])}*  🎯 {safe(v['aceptado_por'])}"
+        )
 
     await edit_to_text(q,
-        "\n".join(lineas),
+        "\n\n".join(lineas),
         parse_mode="Markdown",
         reply_markup=_build_kb_lista(vuelos, user_id),
     )
@@ -159,7 +149,8 @@ async def vl_ver(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
     user_id = update.effective_user.id
     filas = kb_acciones_vuelo(vuelo, user_id)
-    filas.append([InlineKeyboardButton("⬅️  Volver",         callback_data="vl_pendientes")])
+    volver_cb = "vl_sacados" if vuelo["estado"] == "completado" else "vl_pendientes"
+    filas.append([InlineKeyboardButton("⬅️  Volver",         callback_data=volver_cb)])
     filas.append([InlineKeyboardButton("🏠  Menú Principal", callback_data="menu")])
     kb = InlineKeyboardMarkup(filas)
 
