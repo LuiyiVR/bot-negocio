@@ -398,7 +398,8 @@ def soltar_completado(vuelo_id: int, user_id: int) -> dict | None:
 def cancelar_vuelo(vuelo_id: int, user_id: int, nombre: str) -> tuple[dict | None, str]:
     """
     Cancelación según reglas:
-      • Pendiente o En proceso → solo el creador puede cancelar
+      • Pendiente             → cualquier socio puede cancelarlo
+      • En proceso o Caído    → solo el creador puede cancelar
       • Completado            → solo quien lo sacó (aceptado_por_id) puede cancelar
       • Cancelado             → no se puede recancelar
     Devuelve (vuelo_actualizado, mensaje_error_o_vacio).
@@ -412,14 +413,13 @@ def cancelar_vuelo(vuelo_id: int, user_id: int, nombre: str) -> tuple[dict | Non
         if estado == ESTADO_CANCELADO:
             return None, "Este vuelo ya está cancelado."
 
-        autorizado = False
-        if estado in (ESTADO_PENDIENTE, ESTADO_EN_PROCESO, ESTADO_CAIDO):
-            autorizado = (row["creado_por_id"] == user_id)
-            if not autorizado:
+        if estado == ESTADO_PENDIENTE:
+            pass  # cualquier socio autorizado puede cancelarlo
+        elif estado in (ESTADO_EN_PROCESO, ESTADO_CAIDO):
+            if row["creado_por_id"] != user_id:
                 return None, "Solo quien creó el vuelo puede cancelarlo en este estado."
         elif estado == ESTADO_COMPLETADO:
-            autorizado = (row["aceptado_por_id"] == user_id)
-            if not autorizado:
+            if row["aceptado_por_id"] != user_id:
                 return None, "Solo quien sacó el vuelo puede cancelarlo después de completado."
 
         conn.execute("""

@@ -573,7 +573,7 @@ async def vac_cancelar_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
         )
         return ST_MENU
 
-    if estado in ("pendiente", "en_proceso", "caido"):
+    if estado in ("en_proceso", "caido"):
         if vuelo["creado_por_id"] != user_id:
             await edit_q(q,
                 "🚫 *No autorizado*\n\n"

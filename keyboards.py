@@ -69,9 +69,8 @@ def kb_acciones_vuelo(vuelo, user_id: int):
     if estado == "pendiente":
         filas.append([InlineKeyboardButton(f"✅  Tomar (#{vid})",
                                            callback_data=f"vac_tomar:{vid}")])
-        if creador == user_id:
-            filas.append([InlineKeyboardButton(f"❌  Cancelar (#{vid})",
-                                               callback_data=f"vac_cancelar:{vid}")])
+        filas.append([InlineKeyboardButton(f"❌  Cancelar (#{vid})",
+                                           callback_data=f"vac_cancelar:{vid}")])
 
     elif estado == "en_proceso":
         if tomador == user_id:
