@@ -38,6 +38,7 @@ from handlers.vuelo_lista import vl_pendientes, vl_sacados, vl_ver
 from handlers.reportes import (
     rep_mes, rep_otro_mes_inicio, rep_otro_mes_texto,
     rep_semana, rep_dl_mes, rep_dl_semana,
+    checkout_inicio, checkout_ok,
 )
 from handlers.inversion import (
     fondo_ver,
@@ -160,6 +161,8 @@ def _menu_callbacks():
         CallbackQueryHandler(rep_semana,           pattern=r"^rep_semana$"),
         CallbackQueryHandler(rep_dl_mes,           pattern=r"^rep_dl_mes:"),
         CallbackQueryHandler(rep_dl_semana,        pattern=r"^rep_dl_semana$"),
+        CallbackQueryHandler(checkout_inicio,      pattern=r"^checkout_inicio$"),
+        CallbackQueryHandler(checkout_ok,          pattern=r"^checkout_ok$"),
 
         # Fondo
         CallbackQueryHandler(fondo_ver,            pattern=r"^fondo_ver$"),

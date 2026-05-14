@@ -292,9 +292,32 @@ def vuelos_hoy() -> list:
     return vuelos_rango(hoy)
 
 
+def _inicio_semana_actual() -> str:
+    """Lunes 00:00:00 de la semana en curso (formato YYYY-MM-DD HH:MM:SS)."""
+    hoy = datetime.now()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    return lunes.strftime("%Y-%m-%d 00:00:00")
+
+
 def vuelos_semana() -> list:
-    hace7 = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
-    return vuelos_rango(hace7)
+    """Vuelos de la semana actual: desde el lunes 00:00 hasta ahora.
+    Si hubo un checkout posterior al lunes, se usa el checkout como inicio."""
+    desde = _inicio_semana_actual()
+    ultimo = get_config("ultimo_checkout")
+    if ultimo and ultimo > desde:
+        desde = ultimo
+    return vuelos_rango(desde)
+
+
+def get_ultimo_checkout() -> str | None:
+    return get_config("ultimo_checkout")
+
+
+def set_ultimo_checkout() -> str:
+    """Marca el momento de cierre semanal. Devuelve el timestamp grabado."""
+    ts = _now()
+    set_config("ultimo_checkout", ts)
+    return ts
 
 
 def todos_los_vuelos() -> list:

@@ -7,10 +7,12 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFi
 from telegram.ext import ContextTypes, ConversationHandler
 
 import db
+from config import ALLOWED_IDS
 from currency import formato_mxn
-from formatters import safe, fmt_fecha_corta
+from formatters import safe, fmt_fecha_corta, nombre_usuario
+from notifications import notificar_a
 from utils import autorizado, rechazar, db_thread, reply_clean
-from keyboards import kb_volver, kb_cancelar
+from keyboards import kb_volver, kb_cancelar, kb_checkout_confirmar
 from states import ST_MENU, ST_REP_OTRO_MES
 
 
@@ -38,6 +40,7 @@ def _resumen_vuelos(vuelos: list) -> dict:
         "ingreso_completados": 0.0,
         "monto_pendiente":     0.0,  # vuelos pendientes + en_proceso
         "monto_caido":         0.0,  # vuelos caídos sin completar
+        "por_socio":           {},   # nombre -> {"vuelos": n, "monto": m}
     }
     for v in vuelos:
         e = v["estado"]
@@ -58,7 +61,29 @@ def _resumen_vuelos(vuelos: list) -> dict:
         elif e == "completado":
             r["completados"] += 1
             r["ingreso_completados"] += m
+            nombre = (v["aceptado_por"] or "—").strip() or "—"
+            slot = r["por_socio"].setdefault(nombre, {"vuelos": 0, "monto": 0.0})
+            slot["vuelos"] += 1
+            slot["monto"] += m
     return r
+
+
+def _bloque_por_socio(r: dict) -> str:
+    """Líneas con desglose de vuelos completados por socio (ordenado desc)."""
+    if not r["por_socio"]:
+        return ""
+    filas = sorted(
+        r["por_socio"].items(),
+        key=lambda kv: (kv[1]["vuelos"], kv[1]["monto"]),
+        reverse=True,
+    )
+    lineas = ["*🏆 Vuelos sacados por socio*"]
+    for nombre, info in filas:
+        lineas.append(
+            f"  • {safe(nombre)}: {info['vuelos']}  "
+            f"({formato_mxn(info['monto'])})"
+        )
+    return "\n".join(lineas) + "\n\n"
 
 
 def _gastos_fondo_rango(gastos: list, desde_iso: str, hasta_iso: str | None = None) -> tuple[list, float]:
@@ -196,6 +221,7 @@ async def _render_balance_mes(q, anio: int, mes: int):
         f"💥 _Atorado en caídos (no cuenta hasta sacarlos):_ "
         f"{formato_mxn(r['monto_caido'])}\n"
         f"\n"
+        f"{_bloque_por_socio(r)}"
         f"*👥 Reparto por socio* ({n_socios})\n"
         f"  • Cada uno: *{formato_mxn(parte)}*\n"
         f"\n"
@@ -215,32 +241,26 @@ async def _render_balance_mes(q, anio: int, mes: int):
 #  REPORTE SEMANAL
 # ═════════════════════════════════════════════════════════════════════════════
 
-async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
-    if not autorizado(update):
-        await rechazar(update)
-        return ConversationHandler.END
+def _rango_semana_actual() -> tuple[datetime, datetime, str]:
+    """Devuelve (lunes_dt, hoy_dt, desde_iso). desde_iso considera el último
+    checkout si es posterior al lunes."""
+    hoy_dt = datetime.now()
+    lunes_dt = hoy_dt - timedelta(days=hoy_dt.weekday())
+    desde_iso = lunes_dt.strftime("%Y-%m-%d 00:00:00")
+    ultimo = db.get_ultimo_checkout()
+    if ultimo and ultimo > desde_iso:
+        desde_iso = ultimo
+    return lunes_dt, hoy_dt, desde_iso
 
-    q = update.callback_query
-    await q.answer()
 
-    vuelos = await db_thread(db.vuelos_semana)
-    desde = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
-    gastos_todos = await db_thread(db.gastos_fondo)
-    _, gastos_total = _gastos_fondo_rango(gastos_todos, desde)
-
-    r = _resumen_vuelos(vuelos)
+def _texto_reporte_semana(r: dict, gastos_total: float, n_socios: int,
+                          desde_dt: datetime, hasta_dt: datetime,
+                          titulo: str = "📊 *Reporte Semanal*") -> str:
     ingresos = r["ingreso_completados"]
     ganancia_neta = ingresos - gastos_total
-
-    socios = await db_thread(db.get_socios)
-    n_socios = max(1, len(socios))
     parte = ganancia_neta / n_socios
-
-    desde_dt = datetime.now() - timedelta(days=6)
-    hasta_dt = datetime.now()
-
-    texto = (
-        f"📊 *Reporte Semanal*\n"
+    return (
+        f"{titulo}\n"
         f"_{desde_dt.strftime('%d/%m')} – {hasta_dt.strftime('%d/%m/%Y')}_\n"
         f"─────────────────────────────\n"
         f"*✈️ Actividad*\n"
@@ -252,6 +272,7 @@ async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         f"  • En proceso:       {r['en_proceso']} 🔄\n"
         f"  • Tasa de éxito:    {_tasa_exito(r):.1f}%\n"
         f"\n"
+        f"{_bloque_por_socio(r)}"
         f"*💵 Resultado*\n"
         f"  • Ingresos:        *{formato_mxn(ingresos)}*\n"
         f"  • Egresos fondo:   −{formato_mxn(gastos_total)}\n"
@@ -261,6 +282,27 @@ async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         f"💰 _Pendiente por cobrar:_ {formato_mxn(r['monto_pendiente'])}\n"
         f"💥 _Atorado en caídos:_   {formato_mxn(r['monto_caido'])}"
     )
+
+
+async def rep_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+
+    q = update.callback_query
+    await q.answer()
+
+    desde_dt, hasta_dt, desde_iso = _rango_semana_actual()
+
+    vuelos = await db_thread(db.vuelos_semana)
+    gastos_todos = await db_thread(db.gastos_fondo)
+    _, gastos_total = _gastos_fondo_rango(gastos_todos, desde_iso)
+
+    r = _resumen_vuelos(vuelos)
+    socios = await db_thread(db.get_socios)
+    n_socios = max(1, len(socios))
+
+    texto = _texto_reporte_semana(r, gastos_total, n_socios, desde_dt, hasta_dt)
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥  Descargar TXT", callback_data="rep_dl_semana")],
@@ -317,6 +359,17 @@ def _construir_txt(titulo: str, vuelos: list, gastos: list, resumen: dict, gasto
     out.write(f"  Egresos fondo: ${gastos_total:,.2f} MXN\n")
     out.write(f"  Ganancia neta: ${resumen['ingreso_completados'] - gastos_total:,.2f} MXN\n\n")
 
+    if resumen.get("por_socio"):
+        out.write("VUELOS SACADOS POR SOCIO:\n")
+        filas = sorted(
+            resumen["por_socio"].items(),
+            key=lambda kv: (kv[1]["vuelos"], kv[1]["monto"]),
+            reverse=True,
+        )
+        for nombre, info in filas:
+            out.write(f"  {nombre}: {info['vuelos']}  (${info['monto']:,.2f} MXN)\n")
+        out.write("\n")
+
     out.write("-" * 60 + "\n")
     out.write("DETALLE DE VUELOS\n")
     out.write("-" * 60 + "\n")
@@ -372,18 +425,133 @@ async def rep_dl_semana(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     q = update.callback_query
     await q.answer("Generando…")
 
+    desde_dt, hasta_dt, desde_iso = _rango_semana_actual()
+
     vuelos = await db_thread(db.vuelos_semana)
     gastos_todos = await db_thread(db.gastos_fondo)
-    desde = (datetime.now() - timedelta(days=6)).strftime("%Y-%m-%d")
-    gastos_sem, gastos_total = _gastos_fondo_rango(gastos_todos, desde)
+    gastos_sem, gastos_total = _gastos_fondo_rango(gastos_todos, desde_iso)
 
-    desde_dt = datetime.now() - timedelta(days=6)
-    titulo = f"REPORTE SEMANAL — {desde_dt.strftime('%d/%m')} a {datetime.now().strftime('%d/%m/%Y')}"
+    titulo = f"REPORTE SEMANAL — {desde_dt.strftime('%d/%m')} a {hasta_dt.strftime('%d/%m/%Y')}"
     contenido = _construir_txt(titulo, vuelos, gastos_sem, _resumen_vuelos(vuelos), gastos_total)
-    nombre = f"semana_{datetime.now().strftime('%Y-%m-%d')}.txt"
+    nombre = f"semana_{hasta_dt.strftime('%Y-%m-%d')}.txt"
 
     await q.message.reply_document(
         document=InputFile(io.BytesIO(contenido), filename=nombre),
         caption=f"📥 {titulo}",
+    )
+    return ST_MENU
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  CHECKOUT SEMANAL (solo sábados)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _es_sabado_y_pendiente() -> bool:
+    hoy = datetime.now()
+    if hoy.weekday() != 5:
+        return False
+    ultimo = db.get_ultimo_checkout()
+    if not ultimo:
+        return True
+    return ultimo < hoy.strftime("%Y-%m-%d 00:00:00")
+
+
+async def checkout_inicio(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Muestra el reporte semanal final con un botón para confirmar el cierre."""
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+
+    q = update.callback_query
+    await q.answer()
+
+    if not await db_thread(_es_sabado_y_pendiente):
+        await q.edit_message_text(
+            "ℹ️ El cierre semanal solo está disponible los *sábados* "
+            "y solo una vez por semana.",
+            parse_mode="Markdown", reply_markup=kb_volver(),
+        )
+        return ST_MENU
+
+    desde_dt, hasta_dt, desde_iso = _rango_semana_actual()
+    vuelos = await db_thread(db.vuelos_semana)
+    gastos_todos = await db_thread(db.gastos_fondo)
+    _, gastos_total = _gastos_fondo_rango(gastos_todos, desde_iso)
+
+    r = _resumen_vuelos(vuelos)
+    socios = await db_thread(db.get_socios)
+    n_socios = max(1, len(socios))
+
+    cuerpo = _texto_reporte_semana(
+        r, gastos_total, n_socios, desde_dt, hasta_dt,
+        titulo="🔒 *CHECKOUT — Cierre semanal*",
+    )
+    aviso = (
+        "\n\n⚠️ _Al confirmar, se cierra la semana: el reporte semanal se "
+        "reinicia y los próximos vuelos empezarán a contar para la siguiente._"
+    )
+    await q.edit_message_text(
+        cuerpo + aviso, parse_mode="Markdown",
+        reply_markup=kb_checkout_confirmar(),
+    )
+    return ST_MENU
+
+
+async def checkout_ok(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Confirma el cierre semanal: graba timestamp y avisa a los socios."""
+    if not autorizado(update):
+        await rechazar(update)
+        return ConversationHandler.END
+
+    q = update.callback_query
+    await q.answer("Cerrando semana…")
+
+    if not await db_thread(_es_sabado_y_pendiente):
+        await q.edit_message_text(
+            "ℹ️ El cierre ya fue realizado o no es sábado.",
+            parse_mode="Markdown", reply_markup=kb_volver(),
+        )
+        return ST_MENU
+
+    # Construimos el resumen ANTES de marcar el checkout (para incluir todos
+    # los vuelos de la semana que cierra).
+    desde_dt, hasta_dt, desde_iso = _rango_semana_actual()
+    vuelos = await db_thread(db.vuelos_semana)
+    gastos_todos = await db_thread(db.gastos_fondo)
+    _, gastos_total = _gastos_fondo_rango(gastos_todos, desde_iso)
+
+    r = _resumen_vuelos(vuelos)
+    socios = await db_thread(db.get_socios)
+    n_socios = max(1, len(socios))
+    ingresos = r["ingreso_completados"]
+    ganancia_neta = ingresos - gastos_total
+    parte = ganancia_neta / n_socios
+
+    ts = await db_thread(db.set_ultimo_checkout)
+
+    quien = nombre_usuario(update.effective_user)
+    aviso = (
+        f"🔒 *Semana cerrada por {safe(quien)}*\n"
+        f"_{desde_dt.strftime('%d/%m')} – {hasta_dt.strftime('%d/%m/%Y')}_\n"
+        f"─────────────────────────────\n"
+        f"  • Vuelos sacados: *{r['completados']}* ✅\n"
+        f"  • Ingresos:       *{formato_mxn(ingresos)}*\n"
+        f"  • Egresos fondo:  −{formato_mxn(gastos_total)}\n"
+        f"  • Ganancia neta:  *{formato_mxn(ganancia_neta)}*\n"
+        f"  • Por socio:      *{formato_mxn(parte)}*\n"
+        f"\n"
+        f"{_bloque_por_socio(r)}"
+        f"💸 _Repartan el dinero y arrancamos semana nueva._"
+    )
+    try:
+        await notificar_a(ctx.bot, ALLOWED_IDS, aviso, parse_mode="Markdown")
+    except Exception:
+        pass
+
+    await q.edit_message_text(
+        f"✅ *Cierre confirmado*\n_{ts}_\n\n"
+        f"La semana quedó cerrada. El reporte semanal arranca de cero.\n"
+        f"Cada socio: *{formato_mxn(parte)}*",
+        parse_mode="Markdown", reply_markup=kb_volver(),
     )
     return ST_MENU

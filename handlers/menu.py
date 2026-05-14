@@ -1,4 +1,6 @@
 """Menú principal."""
+from datetime import datetime
+
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -12,6 +14,18 @@ BIENVENIDA = (
     "🏢 *Panel de Control — Vuelos*\n"
     "_Selecciona una opción:_"
 )
+
+
+def _es_dia_de_checkout() -> bool:
+    """True si hoy es sábado y aún no se ha cerrado la semana hoy."""
+    hoy = datetime.now()
+    if hoy.weekday() != 5:  # 5 = sábado
+        return False
+    ultimo = db.get_ultimo_checkout()
+    if not ultimo:
+        return True
+    inicio_hoy = hoy.strftime("%Y-%m-%d 00:00:00")
+    return ultimo < inicio_hoy
 
 
 async def mostrar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
@@ -32,17 +46,22 @@ async def mostrar_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
         badges.append(f"🔄 {len(en_proc)} en proceso")
     sub = "\n_" + " · ".join(badges) + "_" if badges else ""
 
+    mostrar_checkout = await db_thread(_es_dia_de_checkout)
+    if mostrar_checkout:
+        sub += "\n\n🔒 _Hoy es sábado — toca *CHECKOUT* para cerrar la semana._"
+
     texto = BIENVENIDA + sub
+    kb = kb_menu(mostrar_checkout=mostrar_checkout)
 
     if update.callback_query:
         q = update.callback_query
         await q.answer()
         msg = await edit_to_text(
-            q, texto, parse_mode="Markdown", reply_markup=kb_menu(),
+            q, texto, parse_mode="Markdown", reply_markup=kb,
         )
     else:
         msg = await update.message.reply_text(
-            texto, parse_mode="Markdown", reply_markup=kb_menu(),
+            texto, parse_mode="Markdown", reply_markup=kb,
         )
 
     ctx.user_data.clear()

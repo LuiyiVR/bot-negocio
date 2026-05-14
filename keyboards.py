@@ -6,8 +6,13 @@ import db
 
 # ── Genéricos ────────────────────────────────────────────────────────────────
 
-def kb_menu():
-    return InlineKeyboardMarkup([
+def kb_menu(mostrar_checkout: bool = False):
+    filas = []
+    if mostrar_checkout:
+        filas.append([InlineKeyboardButton(
+            "🔒  CHECKOUT — Cerrar semana", callback_data="checkout_inicio",
+        )])
+    filas.extend([
         [InlineKeyboardButton("✈️  Nuevo Vuelo",          callback_data="vc_inicio")],
         [
             InlineKeyboardButton("📋  Pendientes",         callback_data="vl_pendientes"),
@@ -22,6 +27,15 @@ def kb_menu():
             InlineKeyboardButton("🗂  Bodega de BINs",     callback_data="bin_menu"),
         ],
         [InlineKeyboardButton("⚙️  Configuración",         callback_data="config_menu")],
+    ])
+    return InlineKeyboardMarkup(filas)
+
+
+def kb_checkout_confirmar():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅  Confirmar cierre semanal",
+                              callback_data="checkout_ok")],
+        [InlineKeyboardButton("⬅️  Cancelar", callback_data="menu")],
     ])
 
 
